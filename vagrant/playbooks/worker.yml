@@ -1,4 +1,4 @@
-- name: Kurbenetes Worker Node Setup
+- name: Kubernetes Worker Node Setup
   hosts: worker
   become: true
   vars:
