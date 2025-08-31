@@ -46,14 +46,8 @@ curl -X POST http://localhost:8080/counter
 # Build podman image
 ./build.sh
 
-# Copy to tmp_sync folder for access in k8s-worker
-podman save httpserver:latest -o httpserver.tar
-mv httpserver.tar /tmp_sync/
-
-# Load the image in k8s-worker
-podman load -i /tmp_sync/httpserver.tar
-
-# Push to crio
+# On worker node:
+sudo podman load -i /tmp_sync/httpserver.tar
 sudo podman push localhost/httpserver:latest containers-storage:httpserver:latest
 
 # Deploy to Kubernetes
@@ -66,7 +60,7 @@ kubectl get pods
 ### Access the service:
 ```bash
 # Port forward to access locally
-kubectl port-forward service/httpserver-service 8080:8080
+kubectl port-forward pod/httpserver 8080:8080
 
 # Then test with:
 curl http://localhost:8080/health
