@@ -1,0 +1,8 @@
+apiVersion: lpm.my.domain/v1
+kind: PodMigration
+metadata:
+    name: httpserver-migration
+    namespace: default
+spec:
+    podName: httpserver
+    targetNode: k8s-master
