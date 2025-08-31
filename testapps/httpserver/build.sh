@@ -1,17 +1,16 @@
 #!/bin/bash
 
-echo "Building Docker image..."
-podman build -t httpserver:latest .
+IMAGE_NAME="httpserver:latest"
+TAR_FILE="/tmp_sync/httpserver.tar"
 
-echo "Docker image built successfully!"
-echo ""
-echo "To run locally:"
-echo "  docker run -p 8080:8080 httpserver:latest"
-echo ""
-echo "To deploy to Kubernetes:"
-echo "  kubectl apply -f k8s-deployment.yaml"
-echo ""
-echo "Endpoints:"
-echo "  GET  /health  - Health check"
-echo "  GET  /counter - Counter endpoint"
-echo "  POST /counter - Counter endpoint"
+echo "Building Podman image..."
+sudo podman build -t $IMAGE_NAME .
+echo "Podman image built successfully!"
+
+echo "Saving image to tarball..."
+sudo podman save -o $TAR_FILE $IMAGE_NAME
+echo "Image saved to $TAR_FILE"
+
+echo "To use on worker node, run:"
+echo "  sudo podman load -i $TAR_FILE"
+echo "  sudo podman push localhost/httpserver:latest containers-storage:httpserver:latest"
