@@ -174,7 +174,7 @@
               - tree
               - jq
               - criu
-              - nfs-common
+              - nfs-common # Only needed if using NFS-backed shared storage
               - build-essential
               - libseccomp-dev
               - pkg-config

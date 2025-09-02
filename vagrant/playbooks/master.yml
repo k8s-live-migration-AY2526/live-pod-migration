@@ -106,6 +106,11 @@
         - name: Apply Flannel manifest
           command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
 
+    - name: Create live-pod-migration-controller-system namespace
+      block:
+        - name: Create lpm namespace
+          command: kubectl create namespace live-pod-migration-controller-system
+
     - name: Enable ContainerCheckpoint feature gate in kubelet
       block:
         - name: Backup kubelet config
@@ -162,40 +167,6 @@
             content: "{{ join_command.stdout }}"
             dest: "{{ join_script_path }}"
             mode: "0755"
-
-    - name: Set up NFS server for checkpoint storage
-      block:
-        - name: Install NFS server
-          apt:
-            name: nfs-kernel-server
-            state: present
-            update_cache: yes
-
-        - name: Create shared directory
-          file:
-            path: /var/nfs/checkpoint-storage
-            state: directory
-            owner: nobody
-            group: nogroup
-            mode: "0777"
-
-        - name: Configure exports
-          lineinfile:
-            path: /etc/exports
-            line: "/var/nfs/checkpoint-storage *(rw,sync,no_subtree_check,no_root_squash)"
-            create: yes
-
-        - name: Start and enable NFS server
-          systemd:
-            name: nfs-kernel-server
-            state: restarted
-            enabled: yes
-
-        - name: Check exported NFS shares
-          command: exportfs -v
-          register: nfs_exports
-          changed_when: false
-          failed_when: "'/var/nfs/checkpoint-storage' not in nfs_exports.stdout"
 
     - name: Install Go controller tools
       block:
