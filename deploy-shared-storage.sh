@@ -25,7 +25,7 @@ echo "4. Creating checkpoint PVC..."
 kubectl apply -f config/storage/checkpoint-pvc.yaml
 
 echo "5. Waiting for PVC to be bound..."
-kubectl wait --for=condition=bound pvc/checkpoint-repo -n live-pod-migration-controller-system --timeout=60s
+kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/checkpoint-repo -n live-pod-migration-controller-system --timeout=60s
 
 echo ""
 echo "✅ Shared storage deployment complete!"
