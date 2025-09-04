@@ -173,13 +173,46 @@
               - curl
               - tree
               - jq
-              - criu
               - nfs-common
               - build-essential
               - libseccomp-dev
               - pkg-config
               - runc
               - podman
+
+        - name: Ensure apt keyrings directory exists
+          file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: 0755
+
+        - name: Download CRIU PPA GPG key
+          get_url:
+            url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x9B29EEC9246B6CE2"
+            dest: /etc/apt/keyrings/criu.asc
+
+        - name: Convert CRIU key to gpg format
+          command: gpg --dearmor -o /etc/apt/keyrings/criu.gpg /etc/apt/keyrings/criu.asc
+          args:
+            creates: /etc/apt/keyrings/criu.gpg
+
+        # Gets CRIU version 4.1.1
+        - name: Add CRIU PPA repository
+          apt_repository:
+            repo: "deb [signed-by=/etc/apt/keyrings/criu.gpg] http://ppa.launchpad.net/criu/ppa/ubuntu {{ ansible_distribution_release }} main"
+            filename: criu_ppa
+            state: present
+            update_cache: yes
+
+        - name: Install CRIU from PPA
+          apt:
+            name: criu
+            state: latest
+
+        - name: Restart CRI-O
+          systemd:
+            name: crio
+            state: restarted
 
         - name: Configure kubelet node ip
           lineinfile:
