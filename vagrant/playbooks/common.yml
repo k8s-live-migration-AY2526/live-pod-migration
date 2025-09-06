@@ -357,14 +357,16 @@
               alias kdp='kubectl delete pod'
               alias kdpm='kubectl delete podmigration'
               alias kl='kubectl logs'
-              alias kd='kubectl describe'
+              alias kdesc='kubectl describe'
 
               alias c='crictl'
               alias sc='sudo crictl'
               alias sci='sudo crictl images'
+              alias scrm='sudo crictl rmi'
 
               alias p='podman'
               alias sp='sudo podman'
               alias spi='sudo podman images'
+              alias sprm='sudo podman rmi'
             create: yes
           become_user: "{{ vagrant_user }}"
