@@ -7,7 +7,6 @@ metadata:
 spec:
     containers:
         - name: httpserver
-          image: httpserver:latest
-          imagePullPolicy: Never
+          image: docker.io/hugenoob/httpserver:latest
           ports:
               - containerPort: 8080
