@@ -4,7 +4,7 @@ IMAGE_NAME="httpserver:latest"
 TAR_FILE="/tmp_sync/httpserver.tar"
 
 echo "Building Podman image..."
-sudo podman build -t $IMAGE_NAME .
+sudo podman build --no-cache -t $IMAGE_NAME .
 echo "Podman image built successfully!"
 
 echo "Saving image to tarball..."
