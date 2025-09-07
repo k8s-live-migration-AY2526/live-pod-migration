@@ -5,7 +5,6 @@ Minimal Python HTTP server with health check and counter endpoints.
 
 import time
 import logging
-import asyncio
 from flask import Flask, jsonify
 
 # Configure logging
@@ -20,11 +19,6 @@ app = Flask(__name__)
 # Global counter variable
 counter = 0
 logger.info("Init global counter: %s", counter)
-
-@app.route('/slow_sleep_async', methods=['GET'])
-async def slow_sleep_async():
-    await asyncio.sleep(15)
-    return "Done\n"
 
 @app.route('/slow_sleep_sync', methods=['GET'])
 def slow_sleep_sync():
@@ -68,7 +62,6 @@ def root():
         "endpoints": {
             "/health": "Health check endpoint",
             "/counter": "Counter endpoint (increments on each call)",
-            "/slow_sleep_async": "Long running endpoint, asyncio sleep",
             "/slow_sleep_sync": "Long running endpoint, time sleep",
             "/slow_work": "Long running endpoint, busy loop",
         }
