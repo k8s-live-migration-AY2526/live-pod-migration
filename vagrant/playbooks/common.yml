@@ -173,7 +173,7 @@
               - curl
               - tree
               - jq
-              - nfs-common
+              - nfs-common # Only needed if using NFS-backed shared storage
               - build-essential
               - libseccomp-dev
               - pkg-config
@@ -297,8 +297,6 @@
               -ldflags "-X main.gitCommit=v1.2.5-criu -X main.version=1.2.5" -o runc .
             sudo cp runc /usr/sbin/runc
             sudo chmod +x /usr/sbin/runc
-          args:
-            creates: /usr/sbin/runc
 
         - name: Fix CRI-O drop-in config to use runc
           lineinfile:

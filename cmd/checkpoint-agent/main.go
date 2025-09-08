@@ -35,11 +35,13 @@ const (
 	checkpointBackoffSteps   = 5
 	checkpointBackoffInitial = 2 * time.Second
 	checkpointBackoffFactor  = 2.0
-	
+
 	// Kubelet certificate paths
 	checkpointCertFile = "/etc/kubernetes/pki/apiserver-kubelet-client.crt"
 	checkpointKeyFile  = "/etc/kubernetes/pki/apiserver-kubelet-client.key"
 	checkpointCAFile   = "/var/lib/kubelet/pki/kubelet.crt"
+
+	checkpointsMountPath = "/mnt/checkpoints"
 )
 
 // CheckpointServer implements the CheckpointService
@@ -54,7 +56,7 @@ func NewCheckpointServer() *CheckpointServer {
 	if nodeName == "" {
 		nodeName = "unknown"
 	}
-	
+
 	return &CheckpointServer{
 		nodeName: nodeName,
 	}
@@ -62,7 +64,7 @@ func NewCheckpointServer() *CheckpointServer {
 
 // Checkpoint implements the checkpoint operation
 func (s *CheckpointServer) Checkpoint(ctx context.Context, req *pb.CheckpointRequest) (*pb.CheckpointResponse, error) {
-	log.Printf("Checkpoint request: namespace=%s, pod=%s, container=%s, uid=%s", 
+	log.Printf("Checkpoint request: namespace=%s, pod=%s, container=%s, uid=%s",
 		req.PodNamespace, req.PodName, req.ContainerName, req.PodUid)
 
 	// Ensure checkpoint directory exists
@@ -127,10 +129,9 @@ func (s *CheckpointServer) Checkpoint(ctx context.Context, req *pb.CheckpointReq
 	}, nil
 }
 
-
 // ConvertCheckpointToImage converts a checkpoint tar file to OCI image format
 func (s *CheckpointServer) ConvertCheckpointToImage(ctx context.Context, req *pb.ConvertRequest) (*pb.ConvertResponse, error) {
-	log.Printf("Convert request: checkpoint_path=%s, container_name=%s, image_name=%s", 
+	log.Printf("Convert request: checkpoint_path=%s, container_name=%s, image_name=%s",
 		req.CheckpointPath, req.ContainerName, req.ImageName)
 
 	// Validate input
@@ -152,7 +153,7 @@ func (s *CheckpointServer) ConvertCheckpointToImage(ctx context.Context, req *pb
 	checkpointPath := req.CheckpointPath
 	if strings.HasPrefix(checkpointPath, "shared://") {
 		filename := strings.TrimPrefix(checkpointPath, "shared://")
-		checkpointPath = filepath.Join("/mnt/checkpoints", filename)
+		checkpointPath = filepath.Join(checkpointsMountPath, filename)
 	}
 
 	// Verify checkpoint file exists
@@ -220,12 +221,12 @@ func (s *CheckpointServer) makeTLSClient() (*http.Client, error) {
 			desc: "master node (alternative CA)",
 		},
 	}
-	
+
 	var cert tls.Certificate
 	var caBytes []byte
 	var err error
 	var workingPaths string
-	
+
 	// Try each certificate path combination
 	for _, paths := range certPaths {
 		// Check if all required files exist
@@ -241,26 +242,26 @@ func (s *CheckpointServer) makeTLSClient() (*http.Client, error) {
 			log.Printf("CA file not found: %s", paths.ca)
 			continue
 		}
-		
+
 		// Try to load the certificate
 		cert, err = tls.LoadX509KeyPair(paths.cert, paths.key)
 		if err != nil {
 			log.Printf("Failed to load certificates from %s/%s (%s): %v", paths.cert, paths.key, paths.desc, err)
 			continue
 		}
-		
+
 		// Try to load the CA
 		caBytes, err = os.ReadFile(paths.ca)
 		if err != nil {
 			log.Printf("Failed to load CA from %s (%s): %v", paths.ca, paths.desc, err)
 			continue
 		}
-		
+
 		workingPaths = fmt.Sprintf("%s (cert=%s, key=%s, ca=%s)", paths.desc, paths.cert, paths.key, paths.ca)
 		log.Printf("Successfully loaded certificates: %s", workingPaths)
 		break
 	}
-	
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to load client certificate from any known location: %w", err)
 	}
@@ -350,7 +351,6 @@ func (s *CheckpointServer) doCheckpointWithBackoff(ctx context.Context, httpClie
 	return checkpointFiles, nil
 }
 
-
 func main() {
 	log.Printf("Starting checkpoint agent on node %s", os.Getenv("NODE_NAME"))
 
@@ -374,7 +374,7 @@ func main() {
 	// Register services
 	checkpointServer := NewCheckpointServer()
 	pb.RegisterCheckpointServiceServer(s, checkpointServer)
-	
+
 	// Register health service
 	healthServer := health.NewServer()
 	grpc_health_v1.RegisterHealthServer(s, healthServer)
@@ -388,7 +388,7 @@ func main() {
 		sigChan := make(chan os.Signal, 1)
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
-		
+
 		log.Println("Shutting down checkpoint agent...")
 		s.GracefulStop()
 	}()
@@ -412,7 +412,7 @@ func (s *CheckpointServer) convertCheckpointToOCI(checkpointPath, containerName,
 	if err != nil {
 		return "", fmt.Errorf("failed to create working container: %v, output: %s", err, output)
 	}
-	
+
 	containerID := strings.TrimSpace(string(output))
 	log.Printf("Created working container: %s", containerID)
 
@@ -431,8 +431,8 @@ func (s *CheckpointServer) convertCheckpointToOCI(checkpointPath, containerName,
 	}
 
 	// Add checkpoint annotation
-	cmd = exec.Command("buildah", append(buildahFlags, "config", 
-		fmt.Sprintf("--annotation=io.kubernetes.cri-o.annotations.checkpoint.name=%s", containerName), 
+	cmd = exec.Command("buildah", append(buildahFlags, "config",
+		fmt.Sprintf("--annotation=io.kubernetes.cri-o.annotations.checkpoint.name=%s", containerName),
 		containerID)...)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("failed to add checkpoint annotation: %v", err)
@@ -450,29 +450,29 @@ func (s *CheckpointServer) convertCheckpointToOCI(checkpointPath, containerName,
 
 // copyToSharedStorage copies checkpoint to shared NFS mount
 func (s *CheckpointServer) copyToSharedStorage(podUID, containerName, localPath string) (string, error) {
-	// Simple path: /mnt/checkpoints/<podUID>-<container>-<timestamp>.tar
+	// Simple path: <checkpointsMountPath>/<podUID>-<container>-<timestamp>.tar
 	timestamp := time.Now().Format("20060102-150405")
 	filename := fmt.Sprintf("%s-%s-%s.tar", podUID, containerName, timestamp)
-	sharedPath := filepath.Join("/mnt/checkpoints", filename)
-	
+	sharedPath := filepath.Join(checkpointsMountPath, filename)
+
 	// Copy file
 	sourceFile, err := os.Open(localPath)
 	if err != nil {
 		return "", err
 	}
 	defer sourceFile.Close()
-	
+
 	destFile, err := os.Create(sharedPath)
 	if err != nil {
 		return "", err
 	}
 	defer destFile.Close()
-	
+
 	_, err = io.Copy(destFile, sourceFile)
 	if err != nil {
 		return "", err
 	}
-	
+
 	// Return relative path for shared:// URI
 	return filename, destFile.Sync()
 }

@@ -9,6 +9,15 @@ This system implements a complete control-plane and node agent architecture for 
 - **Control-Plane Operator**: Runs PodMigration, PodCheckpoint, ContainerCheckpoint reconcilers
 - **Node Checkpoint Agent**: Privileged DaemonSet that performs checkpoint/restore operations via gRPC
 
+## Prerequisites
+- Kubernetes cluster configured
+- A PersistentVolumeClaim(PVC) that points to a shared storage present in the cluster
+  - PVC needs to be of name `checkpoint-repo` in namespace `live-pod-migration-controller-system`
+    - The `checkpoint-agents` assume this PVC is available for writing/reading checkpoint files for checkpointing/restoring purposes
+  - You are free to choose any shared storage of your choice, it just needs to have the following properties:
+    - **ReadWriteMany(RWX)** access mode so that multiple checkpointing can happen at the same time
+    - **POSIX-like semantics** to preserve the CRIU artifacts correctly
+
 ## Quick Start
 
 ### 1. Build and Deploy
@@ -29,15 +38,8 @@ sudo buildah bud -t localhost/controller:latest .
 # Build the checkpoint agent with buildah
 sudo buildah bud -t localhost/checkpoint-agent:latest -f Dockerfile.agent .
 
-# Push directly into CRI-O's local store
-sudo buildah push localhost/controller:latest oci:/var/lib/containers/storage:localhost/controller:latest
-sudo buildah push localhost/checkpoint-agent:latest oci:/var/lib/containers/storage:localhost/checkpoint-agent:latest
-
 # Deploy the system (includes CRDs, RBAC, controller, and agent DaemonSet)
 make deploy IMG=localhost/controller:latest AGENT_IMG=localhost/checkpoint-agent:latest
-
-# Deploy shared storage for cross-node checkpoint access
-./deploy-shared-storage.sh
 ```
 
 ### 2. Verify Deployment
@@ -150,23 +152,7 @@ kubectl describe podcheckpoint multi-container-checkpoint
 kubectl get podcheckpointcontent
 ```
 
-### 6. Verify Shared Storage
-
-```bash
-# Check shared storage is working
-kubectl get pvc -n live-pod-migration-controller-system
-
-# Verify NFS provisioner is running
-kubectl get pods -n kube-system -l app=nfs-subdir-external-provisioner
-
-# Check agent pods have shared storage mounted
-kubectl get pods -n live-pod-migration-controller-system -l app=checkpoint-agent -o jsonpath='{.items[0].spec.volumes[?(@.name=="checkpoint-repo")].persistentVolumeClaim.claimName}'
-
-# Test checkpoint files are saved to shared storage
-kubectl exec -n live-pod-migration-controller-system $(kubectl get pods -n live-pod-migration-controller-system -l app=checkpoint-agent -o jsonpath='{.items[0].metadata.name}') -- ls -la /mnt/checkpoints/
-```
-
-### 7. Test Live Pod Migration with Process State Verification
+### 6. Test Live Pod Migration with Process State Verification
 
 **IMPORTANT**: This test requires CRIU 4.1.1+ for ARM64 compatibility. If using CRIU 3.16.1, upgrade first:
 
@@ -295,7 +281,7 @@ kubectl delete podmigration counter-migration --ignore-not-found=true
 **Note**: Same-node migration tests the checkpoint/restore mechanism without network namespace complications. If this fails, the issue is with the basic CRIU restore process. If this succeeds but cross-node migration fails, then the issue is specifically network namespace migration (as suspected).
 
 
-### 8. Verify Cross-Node Checkpoint Access
+### 7. Verify Cross-Node Checkpoint Access
 
 ```bash
 # Check which nodes have checkpoint agents
@@ -318,7 +304,7 @@ echo "Testing checkpoint file access across nodes:"
 kubectl exec -n live-pod-migration-controller-system $POD -- ls -la /mnt/checkpoints/
 ```
 
-### 9. Verify Agent Operation
+### 8. Verify Agent Operation
 
 ```bash
 # Check agent pods are running
@@ -377,7 +363,7 @@ kubectl logs -n live-pod-migration-controller-system -l app=checkpoint-agent | g
 3. **Automatic Scheduling**: If no destination node specified, scheduler selects optimal target node
 
 ### Shared Storage Behavior
-1. **NFS-based Storage**: Uses NFS subdir external provisioner for ReadWriteMany access
+1. **NFS-based Storage**: Uses NFS for ReadWriteMany access
 2. **Checkpoint Files**: Accessible from all nodes at `/mnt/checkpoints/` 
 3. **Fallback Mechanism**: Falls back to local storage if shared storage unavailable
 4. **URI Format**: Shared files use `shared://<filename>` format, local files use `file://<path>` format
