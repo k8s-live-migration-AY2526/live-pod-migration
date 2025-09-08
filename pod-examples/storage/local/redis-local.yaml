@@ -1,0 +1,55 @@
+# Local PV
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: redis-local-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  local:
+    path: /mnt/disks/ssd1 
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - k8s-worker 
+
+---
+
+# PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-local-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  volumeName: redis-local-pv
+
+---
+
+# Pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: redis-local
+spec:
+  nodeName: k8s-worker
+  containers:
+    - name: redis
+      image: redis:7
+      volumeMounts:
+        - mountPath: /data
+          name: redis-data
+  volumes:
+    - name: redis-data
+      persistentVolumeClaim:
+        claimName: redis-local-pvc
