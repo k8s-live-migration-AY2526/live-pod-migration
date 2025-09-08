@@ -32,6 +32,7 @@ import (
 
 	lpmv1 "my.domain/guestbook/api/v1"
 	"my.domain/guestbook/internal/agent"
+	"my.domain/guestbook/internal/utils"
 )
 
 // PodMigrationReconciler reconciles a PodMigration object
@@ -39,6 +40,7 @@ type PodMigrationReconciler struct {
 	client.Client
 	Scheme      *runtime.Scheme
 	AgentClient *agent.Client
+	Puller      utils.Puller
 }
 
 // +kubebuilder:rbac:groups=lpm.my.domain,resources=podmigrations,verbs=get;list;watch;create;update;patch;delete
@@ -50,6 +52,15 @@ type PodMigrationReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 
+func NewPodMigrationReconciler(c client.Client, scheme *runtime.Scheme) *PodMigrationReconciler {
+	return &PodMigrationReconciler{
+		Client:      c,
+		Scheme:      scheme,
+		AgentClient: agent.NewClient(c),
+		Puller:      utils.NewEphemeralPuller(c, "default"),
+	}
+}
+
 func (r *PodMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
@@ -59,10 +70,12 @@ func (r *PodMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if podMigration.Status.Phase == "" {
-		podMigration.Status.Phase = lpmv1.MigrationPhasePending
+		podMigration.Status.Phase = lpmv1.MigrationPhasePrePullImages
 	}
 
 	switch podMigration.Status.Phase {
+	case lpmv1.MigrationPhasePrePullImages:
+		return r.handlePrePullImagesPhase(ctx, &podMigration)
 	case lpmv1.MigrationPhasePending:
 		return r.handlePendingPhase(ctx, &podMigration)
 	case lpmv1.MigrationPhaseCheckpointing:
@@ -79,6 +92,61 @@ func (r *PodMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		logger.Info("Unknown phase, nothing to do", "phase", podMigration.Status.Phase)
 		return ctrl.Result{}, nil
 	}
+}
+
+func (r *PodMigrationReconciler) handlePrePullImagesPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	logger.Info("Handling PrePullImages phase for PodMigration", "name", podMigration.Name)
+
+	// Trigger image pulling if not already started
+	if podMigration.Status.EphemeralPullPodName == "" {
+		originalPod, err := r.getOriginalPod(ctx, podMigration)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to get original pod: %w", err)
+		}
+
+		// Collect all images from containers and initContainers
+		imagesToPull := []string{}
+		for _, c := range append(originalPod.Spec.Containers, originalPod.Spec.InitContainers...) {
+			imagesToPull = append(imagesToPull, c.Image)
+		}
+
+		podName, err := r.Puller.PullImages(ctx, podMigration.Spec.TargetNode, imagesToPull)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to create pull pod: %w", err)
+		}
+
+		podMigration.Status.EphemeralPullPodName = podName
+		if err := r.Status().Update(ctx, podMigration); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to update podMigration status: %w", err)
+		}
+		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+	}
+
+	// Check pull status
+	pullStatus, err := r.Puller.CheckPullStatusAndCleanup(ctx, podMigration.Status.EphemeralPullPodName)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to check pull pod status: %w", err)
+	}
+
+	switch pullStatus {
+	case utils.PullSucceeded:
+		podMigration.Status.Phase = lpmv1.MigrationPhasePending
+		podMigration.Status.Message = "Base images pulled successfully"
+	case utils.PullFailed:
+		podMigration.Status.Phase = lpmv1.MigrationPhaseFailed
+		podMigration.Status.Message = "Base images pull failed"
+	case utils.PullPending:
+		// Still pulling, requeue
+		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+	}
+
+	// Update status once if needed
+	if err := r.Status().Update(ctx, podMigration); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to update podMigration status: %w", err)
+	}
+
+	return ctrl.Result{}, nil
 }
 
 func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
@@ -389,11 +457,8 @@ func (r *PodMigrationReconciler) updatePhase(ctx context.Context, podMigration *
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *PodMigrationReconciler) createRestoredPod(ctx context.Context, podMigration *lpmv1.PodMigration) (*corev1.Pod, error) {
-	var originalPod corev1.Pod
-	err := r.Get(ctx, client.ObjectKey{
-		Namespace: podMigration.Namespace,
-		Name:      podMigration.Spec.PodName,
-	}, &originalPod)
+	// Get original pod
+	originalPod, err := r.getOriginalPod(ctx, podMigration)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get original pod: %w", err)
 	}
@@ -403,8 +468,8 @@ func (r *PodMigrationReconciler) createRestoredPod(ctx context.Context, podMigra
 
 	// Change only what's absolutely necessary
 	restoredPod.ObjectMeta.Name = fmt.Sprintf("%s-restored", originalPod.Name)
-	restoredPod.ObjectMeta.ResourceVersion = ""  // Required for creation
-	restoredPod.ObjectMeta.UID = ""              // Required for creation
+	restoredPod.ObjectMeta.ResourceVersion = ""              // Required for creation
+	restoredPod.ObjectMeta.UID = ""                          // Required for creation
 	restoredPod.Spec.NodeName = podMigration.Spec.TargetNode // Target node
 
 	// Add migration tracking annotations
@@ -503,6 +568,16 @@ func (r *PodMigrationReconciler) convertToOCIImage(ctx context.Context, checkpoi
 	}
 
 	return imageRef, nil
+}
+
+func (r *PodMigrationReconciler) getOriginalPod(ctx context.Context, podMigration *lpmv1.PodMigration) (*corev1.Pod, error) {
+	var originalPod corev1.Pod
+	err := r.Get(ctx, client.ObjectKey{
+		Namespace: podMigration.Namespace,
+		Name:      podMigration.Spec.PodName,
+	}, &originalPod)
+
+	return &originalPod, err
 }
 
 func (r *PodMigrationReconciler) deleteOriginalPod(ctx context.Context, podMigration *lpmv1.PodMigration) error {
