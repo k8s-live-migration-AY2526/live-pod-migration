@@ -24,6 +24,7 @@ import (
 type PodMigrationPhase string
 
 const (
+	MigrationPhasePrePullImages      PodMigrationPhase = "PrePullImages"
 	MigrationPhasePending            PodMigrationPhase = "Pending"
 	MigrationPhaseCheckpointing      PodMigrationPhase = "Checkpointing"
 	MigrationPhaseCheckpointComplete PodMigrationPhase = "CheckpointComplete"
@@ -50,6 +51,9 @@ type PodMigrationStatus struct {
 	// Message is a human-readable summary of the most recent state transition
 	// or error.
 	Message string `json:"message,omitempty"`
+
+	// EphemeralPullPodName is the name of the ephemeral pod used to pull images.
+	EphemeralPullPodName string `json:"ephemeralPullPodName,omitempty"`
 
 	// PodCheckpointRef lets PodMigration track the checkpoint it spawned/bound.
 	PodCheckpointRef *corev1.LocalObjectReference `json:"podCheckpointRef,omitempty"`
