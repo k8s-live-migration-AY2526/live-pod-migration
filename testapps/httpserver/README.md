@@ -23,10 +23,10 @@ sudo apt-get update
 sudo apt-get -y install podman
 
 # Build the image
-podman build -t httpserver:latest .
+sudo podman build -t httpserver:latest .
 
 # Run the container
-podman run -p 8080:8080 httpserver:latest
+sudo podman run -p 8080:8080 httpserver:latest
 ```
 
 ### Test the endpoints:
@@ -43,6 +43,7 @@ curl -X POST http://localhost:8080/counter
 
 ### Build and deploy:
 ```bash
+# (If not using Dockerhub, save and load the image locally)
 # Build podman image
 ./build.sh
 
@@ -53,8 +54,14 @@ sudo podman push localhost/httpserver:latest containers-storage:httpserver:lates
 # Deploy to Kubernetes
 kubectl apply -f k8s-deployment.yaml
 
-# Check deployment status
-kubectl get pods
+-----
+
+# (If using Dockerhub, push image to Dockerhub)
+sudo podman build --no-cache -t $IMAGE_NAME:$TAG .
+sudo podman push $IMAGE_NAME:$TAG
+
+# Then deploy with:
+kubectl apply -f k8s-deployment.yaml
 ```
 
 ### Access the service:
