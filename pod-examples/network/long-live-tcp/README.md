@@ -7,7 +7,9 @@
 - Container exposes `hostPort: 2222` for SSH (`containerPort: 22`)
 
 ## Expected Outcome
-- Migration should work and allow SSH clients to connect to the SSH server on the new node via the same `hostPort`.
+- Migration should not work if there is an open tcp connection to the ssh-server
+    - This is a limitation of the CRIU checkpoint api, where checkpointing will fail if there are open connections
+    - To checkpoint pods with open connections, need to use `--tcp-established` flag 
 
 ---
 
@@ -49,22 +51,17 @@ spec:
 EOF
 ```
 
-5. Verify pod running on the target node
+TODO: Update this instruction
+5. Verify pod migration failed
 ```bash
 kubectl get pods -o wide
 ```
 
-6. Test connectivity to SSH server on the new node
-```bash
-# From outside the VMs. Expected outcome: SSH should succeed on the new node's IP via port 2222
-ssh -p 2222 linuxserver.io@192.168.56.10
-# When prompted, enter: password
-```
-
-7. Cleanup
+6. Cleanup
 ```bash
 kubectl delete pod ssh-server ssh-server-restored --ignore-not-found
 kubectl delete podmigration ssh-server-migration --ignore-not-found
+
+# Outside VM, remove ssh keys
+ssh-keygen -R "[192.168.56.11]:2222" 
 ```
-
-
