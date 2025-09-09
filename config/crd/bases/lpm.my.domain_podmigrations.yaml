@@ -15,6 +15,19 @@ spec:
   scope: Namespaced
   versions:
   - name: v1
+    additionalPrinterColumns:
+    - name: Pod Name
+      type: string
+      jsonPath: .spec.podName
+      description: Name of the Pod to migrate
+    - name: Target Node
+      type: string
+      jsonPath: .spec.targetNode
+      description: Target node for restore
+    - name: Phase
+      type: string
+      jsonPath: .status.phase
+      description: Current lifecycle phase
     schema:
       openAPIV3Schema:
         description: PodMigration is the Schema for the podmigrations API.

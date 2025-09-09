@@ -53,10 +53,11 @@ EOF
 
 5. Verify pod migration failed
 ```bash
-kubectl describe podmigration ssh-server-migration | grep Phase:
+# Wait for the status to transition to failed
+kubectl wait --for=jsonpath='{.status.phase}'=Failed podmigration/ssh-server-migration --timeout=60s
+
+kubectl get podmigration
 ```
-Expected:
-- Keep trying the above command until the phase is `Failed`, which indicates the failure of pod migration
 
 6. Cleanup
 ```bash
