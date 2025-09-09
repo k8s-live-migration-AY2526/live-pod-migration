@@ -27,7 +27,7 @@ kubectl get pods -o wide
 
 3. Test connectivity to SSH server on the current node
 ```bash
-# Get the username used for ssh
+# Get the username used for ssh and update the next command if required
 kubectl logs ssh-server | grep "User name is set to"
 
 # From outside the VMs. Expected outcome: SSH should prompt for and accept the password
@@ -51,11 +51,12 @@ spec:
 EOF
 ```
 
-TODO: Update this instruction
 5. Verify pod migration failed
 ```bash
-kubectl get pods -o wide
+kubectl describe podmigration ssh-server-migration | grep Phase:
 ```
+Expected:
+- Keep trying the above command until the phase is `Failed`, which indicates the failure of pod migration
 
 6. Cleanup
 ```bash

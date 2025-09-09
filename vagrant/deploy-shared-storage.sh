@@ -71,8 +71,8 @@ curl -skSL https://raw.githubusercontent.com/kubernetes-csi/csi-driver-nfs/v4.11
 
 # 7. Wait for NFS CSI driver to be ready
 echo "7. Waiting for NFS CSI driver to be ready..."
-kubectl wait --for=condition=ready pod -l app=csi-nfs-node -n kube-system --timeout=60s
-kubectl wait --for=condition=ready pod -l app=csi-nfs-controller -n kube-system --timeout=60s
+kubectl wait --for=condition=ready pod -l app=csi-nfs-node -n kube-system
+kubectl wait --for=condition=ready pod -l app=csi-nfs-controller -n kube-system
 
 # 8. Deploy StorageClass and PVC
 echo "8. Deploying StorageClass and PVC..."
@@ -87,7 +87,7 @@ kubectl apply -f ../config/storage/checkpoint-pvc.yaml
 
 # 9. Wait for PVC to be bound
 echo "9. Waiting for PVC to be bound..."
-kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/checkpoint-repo -n live-pod-migration-controller-system --timeout=120s
+kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/checkpoint-repo -n live-pod-migration-controller-system
 
 echo ""
 echo "✅ Shared storage deployment complete!"
