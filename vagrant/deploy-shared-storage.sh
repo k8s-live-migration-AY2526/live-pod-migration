@@ -3,23 +3,6 @@ set -euo pipefail
 
 echo "Deploying shared storage that creates pvc/checkpoint-repo in namespace live-pod-migration-controller-system"
 
-# Configurations
-NFS_SERVER_IP="192.168.56.10"
-NFS_PATH="/var/nfs/checkpoint-storage"
-
-PVC_NAME="checkpoint-repo"
-PVC_NAMESPACE="live-pod-migration-controller-system"
-PVC_STORAGE_SIZE="20Gi"
-
-
-echo "-------------- Configurations ---------------"
-echo "NFS_SERVER_IP: $NFS_SERVER_IP"
-echo "NFS_PATH: $NFS_PATH"
-echo "PVC_STORAGE_SIZE: $PVC_STORAGE_SIZE"
-echo "PVC_NAME: $PVC_NAME"
-echo "PVC_NAMESPACE: $PVC_NAMESPACE"
-echo "--------------------------------"
-
 # Ensure non-interactive apt behavior (avoid prompts like kernel restart)
 export DEBIAN_FRONTEND=noninteractive
 # Disable needrestart prompts entirely and avoid restarting services/reboot prompts
@@ -36,13 +19,13 @@ sudo -E apt-get \
 
 # 2. Create shared directory
 echo "2. Creating NFS shared directory..."
-sudo mkdir -p $NFS_PATH
-sudo chown nobody:nogroup $NFS_PATH
-sudo chmod 0777 $NFS_PATH
+sudo mkdir -p /var/nfs/checkpoint-storage
+sudo chown nobody:nogroup /var/nfs/checkpoint-storage
+sudo chmod 0777 /var/nfs/checkpoint-storage
 
 # 3. Configure exports
 echo "3. Configuring NFS exports..."
-EXPORT_LINE="$NFS_PATH *(rw,sync,no_subtree_check,no_root_squash)"
+EXPORT_LINE="/var/nfs/checkpoint-storage *(rw,sync,no_subtree_check,no_root_squash)"
 if ! grep -qF "$EXPORT_LINE" /etc/exports; then
     echo "$EXPORT_LINE" | sudo tee -a /etc/exports
 fi
@@ -57,7 +40,7 @@ sudo systemctl enable nfs-kernel-server
 
 # 5. Check exported NFS shares
 echo "5. Verifying NFS exports..."
-if sudo exportfs -v | grep -q "$NFS_PATH"; then
+if sudo exportfs -v | grep -q "/var/nfs/checkpoint-storage"; then
     echo "✅ NFS share exported successfully."
 else
     echo "❌ NFS share not found in exportfs output."
@@ -76,14 +59,8 @@ kubectl wait --for=condition=ready pod -l app=csi-nfs-controller -n kube-system 
 
 # 8. Deploy StorageClass and PVC
 echo "8. Deploying StorageClass and PVC..."
-sed -i "s|<NFS_SERVER_IP>|$NFS_SERVER_IP|g" ../config/storage/checkpoint-storage-class.yaml
-sed -i "s|<NFS_PATH>|$NFS_PATH|g" ../config/storage/checkpoint-storage-class.yaml
-kubectl apply -f ../config/storage/checkpoint-storage-class.yaml
-
-sed -i "s|<PVC_NAME>|$PVC_NAME|g" ../config/storage/checkpoint-pvc.yaml
-sed -i "s|<PVC_NAMESPACE>|$PVC_NAMESPACE|g" ../config/storage/checkpoint-pvc.yaml
-sed -i "s|<PVC_STORAGE_SIZE>|$PVC_STORAGE_SIZE|g" ../config/storage/checkpoint-pvc.yaml
-kubectl apply -f ../config/storage/checkpoint-pvc.yaml
+kubectl apply -f config/storage/checkpoint-storage-class.yaml
+kubectl apply -f config/storage/checkpoint-pvc.yaml
 
 # 9. Wait for PVC to be bound
 echo "9. Waiting for PVC to be bound..."
