@@ -48,7 +48,7 @@ echo
 
 echo "=== Cleaning up shared storage infrastructure ==="
 kubectl delete -f config/storage/checkpoint-pvc.yaml --ignore-not-found=true
-kubectl delete -f config/storage/nfs-provisioner.yaml --ignore-not-found=true
+kubectl delete -f config/storage/checkpoint-storage-class.yaml --ignore-not-found=true
 kubectl delete job/nfs-setup -n kube-system --ignore-not-found=true
 kubectl delete configmap/nfs-setup-script -n kube-system --ignore-not-found=true
 echo
