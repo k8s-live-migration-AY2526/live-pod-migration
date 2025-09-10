@@ -72,17 +72,25 @@ def session_counter():
     return jsonify({"session_count": session["count"]}), 200
 
 
+import socket
+
+def get_pod_ip():
+    try:
+        # open a dummy socket connection to a well-known address
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))   # doesn't actually send packets
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "unresolved"
+
+
 @app.route("/whoami", methods=["GET"])
 def whoami():
-    return (
-        jsonify(
-            {
-                "hostname": socket.gethostname(),
-                "ip": socket.gethostbyname(socket.gethostname()),
-            }
-        ),
-        200,
-    )
+    hostname = socket.gethostname()
+    ip = get_pod_ip()
+    return jsonify({"hostname": hostname, "ip": ip})
 
 
 @app.route("/", methods=["GET"])
