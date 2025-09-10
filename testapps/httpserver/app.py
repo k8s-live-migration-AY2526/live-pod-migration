@@ -21,7 +21,7 @@ clients = {}
 
 @app.route("/slow_sleep_sync", methods=["GET"])
 def slow_sleep_sync():
-    time.sleep(15)
+    time.sleep(60)
     return "Done\n"
 
 
@@ -29,7 +29,7 @@ def slow_sleep_sync():
 def slow_work():
     start = time.time()
     i = 0
-    while time.time() - start < 15:
+    while time.time() - start < 60:
         i += 1
     return f"{str(i)}\n"
 
@@ -59,7 +59,7 @@ def client_info():
 @app.route("/stream", methods=["GET"])
 def stream():
     def generate():
-        for i in range(10):
+        for i in range(30):
             yield f"chunk {i}\n"
             time.sleep(2)
 
