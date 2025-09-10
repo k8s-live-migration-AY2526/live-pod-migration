@@ -1,17 +1,18 @@
 # Vagrant Kubernetes Cluster for Live Pod Migration Testing
 
-This directory contains a simplified Vagrant setup suitable for testing the live pod migration controller with a 2-node Kubernetes cluster.
+This directory contains a simplified Vagrant setup suitable for testing the live pod migration controller with a 3-node Kubernetes cluster.
 
 ## Prerequisites
 
 - [Vagrant](https://www.vagrantup.com/downloads) installed
 - [VirtualBox](https://www.virtualbox.org/wiki/Downloads) or [Parallels](https://www.parallels.com/) installed
-- At least 6GB RAM available for VMs
+- At least 8GB RAM available for VMs
 
 ## Cluster Architecture
 
 - **Master Node** (`k8s-master`): 4GB RAM, 2 CPUs, IP: 192.168.56.10
 - **Worker Node** (`k8s-worker`): 2GB RAM, 2 CPUs, IP: 192.168.56.11
+- **Worker2 Node** (`k8s-worker2`): 2GB RAM, 2 CPUs, IP: 192.168.56.12
 
 ## Quick Start
 
@@ -22,7 +23,29 @@ cd vagrant/
 vagrant up
 ```
 
-### 2. Verify Cluster
+### 2. Join the workers
+```bash
+# SSH into master node
+vagrant ssh master
+
+# On master, generate the join command, should generate something like kubeadm join 192.168.56.10:6443 --token ... 
+kubeadm token create --print-join-command
+
+# Copy the above command and run it on both workers with sudo access
+
+# SSH into worker node
+vagrant ssh worker
+sudo kubeadm join 192.168.56.10:6443 --token ...
+
+# SSH into worker2 node
+vagrant ssh worker2
+sudo kubeadm join 192.168.56.10:6443 --token ...
+
+# On master, wait for all nodes to be ready
+kubectl wait --for=condition=Ready nodes --all --timeout=10m
+```
+
+### 3. Verify Cluster
 
 ```bash
 # SSH into master node
@@ -33,7 +56,7 @@ kubectl get nodes
 kubectl get pods --all-namespaces
 ```
 
-### 3. Deploy Shared Storage (NFS)
+### 4. Deploy Shared Storage (NFS)
 ```bash
 # SSH into master node
 vagrant ssh master
@@ -83,7 +106,7 @@ vagrant destroy                  # Delete all VMs
 
 1. **Make changes** to the controller code on your host machine
 2. **Sync changes** to VMs: `vagrant rsync`
-3. **Build + Deploy + Test** inside master VM: `sudo make docker-build IMG=controller:latest`
+3. **Build + Deploy + Test** inside master VM, run your build + deploy commands
 
 ## Cleanup
 

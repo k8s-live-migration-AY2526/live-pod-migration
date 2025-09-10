@@ -22,6 +22,9 @@ kubectl apply -f ssh-server.yaml
 
 2. Verify pod running and on which node
 ```bash
+kubectl wait --for=condition=Ready pod/ssh-server --timeout=5m
+
+# Running on worker
 kubectl get pods -o wide
 ```
 
@@ -47,14 +50,14 @@ metadata:
   namespace: default
 spec:
   podName: ssh-server
-  targetNode: k8s-master
+  targetNode: k8s-worker2
 EOF
 ```
 
 5. Verify pod migration failed
 ```bash
-# Wait for the status to transition to failed
-kubectl wait --for=jsonpath='{.status.phase}'=Failed podmigration/ssh-server-migration --timeout=60s
+# Wait for the status to transition to failed, this will take a while...
+kubectl wait --for=jsonpath='{.status.phase}'=Failed podmigration/ssh-server-migration --timeout=5m
 
 kubectl get podmigration
 ```

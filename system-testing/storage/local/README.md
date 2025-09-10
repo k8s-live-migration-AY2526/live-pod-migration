@@ -30,50 +30,39 @@
 
 ## Steps to Test
 
-1. **Review and edit the manifest**
-   - In `redis-local.yaml`, set the Local PV `spec.local.path` to a real path on the target node.
-   - Ensure `nodeAffinity` hostname matches your worker node (e.g., `k8s-worker`).
-
-2. **Prepare local path on the target node**
-   - Ensure the directory exists and is writable on the node backing the Local PV (e.g., `k8s-worker`).
+1. **Prepare local path on the target node**
 ```bash
 # on k8s-worker
 sudo mkdir -p /mnt/disks/ssd1
-sudo chown 1001:1001 /mnt/disks/ssd1   # or set appropriate perms for Redis container
-sudo chmod 0777 /mnt/disks/ssd1        # quick test-friendly option
+sudo chown 1001:1001 /mnt/disks/ssd1 
+sudo chmod 0777 /mnt/disks/ssd1   
 ```
 
-3. **Deploy PV, PVC, and Pod**
+2. **Deploy PV, PVC, and Pod**
 ```bash
+# On k8s-master
 kubectl apply -f redis-local.yaml
 ```
 
-4. **Verify Pod is running**
+3. **Verify Pod is running**
 ```bash
+kubectl wait --for=condition=Ready pod/redis-local --timeout=5m
+
+# Running on worker
 kubectl get pods -o wide
 ```
 Expected:
 ```
-NAME          READY   STATUS    RESTARTS   AGE   NODE
-redis-local   1/1     Running   0          30s   k8s-worker
+NAME          READY   STATUS    RESTARTS   AGE   IP           NODE         NOMINATED NODE   READINESS GATES
+redis-local   1/1     Running   0          22s   10.244.1.5   k8s-worker   <none>           <none>
 ```
 
-5. **Check Redis server logs before migration**
+4. **Check Redis server logs before migration**
 ```bash
 kubectl logs -f redis-local
 ```
 
-6. **Store some test data in Redis**
-```bash
-kubectl exec redis-local -- redis-cli SET mykey "local pv test"
-kubectl exec redis-local -- redis-cli GET mykey
-```
-Expected output:
-```
-local pv test
-```
-
-7. **Trigger migration**
+5. **Trigger migration**
    - Note: Migrating to a different node is expected to fail due to the Local PV being node-bound. 
 ```bash
 kubectl apply -f - <<EOF
@@ -84,13 +73,15 @@ metadata:
   namespace: default
 spec:
   podName: redis-local
-  targetNode: k8s-master
+  targetNode: k8s-worker2
 EOF
 ```
 
-8. **Observe results**
+6. **Observe results**
    - Check Pod statuses and events:
 ```bash
+kubectl wait --for=jsonpath='{.status.phase}'=Restoring podmigration/redis-local-migration --timeout=5m
+
 kubectl get pods -o wide
 kubectl describe pod redis-local-restored
 ```
@@ -104,7 +95,7 @@ kubectl describe pod redis-local-restored
       Warning  FailedMount  5s (x5 over 12s)  kubelet  MountVolume.NodeAffinity check failed for volume "redis-local-pv" : no matching NodeSelectorTerms
       ```
 
-9. **Cleanup**
+7. **Cleanup**
 ```bash
 kubectl delete pod redis-local redis-local-restored --ignore-not-found=true
 kubectl delete pvc redis-local-pvc --ignore-not-found=true

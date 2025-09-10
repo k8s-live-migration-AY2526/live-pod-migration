@@ -3,9 +3,6 @@
 
 Vagrant.configure("2") do |config|
   config.vm.box = "bento/ubuntu-22.04"
-  
-  # Configure a tmp bi-directional sync folder
-  config.vm.synced_folder ".","/tmp_sync"
 
   # Explicitly configure the /vagrant shared folder with rsync
   config.vm.synced_folder ".", "/vagrant", type: "rsync", rsync__auto: true
@@ -59,9 +56,27 @@ Vagrant.configure("2") do |config|
     worker.vm.provision "ansible_local" do |ansible|
       ansible.playbook = "playbooks/common.yml"
     end
+  end
 
-    worker.vm.provision "ansible_local" do |ansible|
-      ansible.playbook = "playbooks/worker.yml"
+  # Worker node 2 - depends on master being up first
+  config.vm.define "worker2" do |worker2|
+    worker2.vm.hostname = "k8s-worker2"
+    worker2.vm.network "private_network", ip: "192.168.56.12"
+    
+    worker2.vm.provider "virtualbox" do |vb|
+      vb.memory = "2048"
+      vb.cpus = 2
+      vb.name = "k8s-worker2"
+    end
+
+    worker2.vm.provider "parallels" do |prl|
+      prl.memory = 2048
+      prl.cpus = 2
+      prl.name = "k8s-worker2"
+    end
+
+    worker2.vm.provision "ansible_local" do |ansible|
+      ansible.playbook = "playbooks/common.yml"
     end
   end
 

@@ -32,7 +32,7 @@
 
 - **After Migration:**  
   - Pod continues running on target node  
-  - Counter continues incrementing (not from 1)
+  - Counter continues incrementing from the point of checkpoint (not from 1)
   - Log truncated if using `emptyDir` (ephemeral), expected behavior  
 
 ---
@@ -46,12 +46,15 @@ kubectl apply -f counter.yaml
 
 2. **Verify Pod is running**
 ```bash
-kubectl get pods
+kubectl wait --for=condition=Ready pod/counter-migration-test --timeout=5m
+
+# Running on worker
+kubectl get pods -o wide
 ```
 Expected:
 ```
-NAME                     READY   STATUS    RESTARTS   AGE
-counter-migration-test   1/1     Running   0          30s
+NAME                     READY   STATUS    RESTARTS   AGE   IP           NODE         NOMINATED NODE   READINESS GATES
+counter-migration-test   1/1     Running   0          5s    10.244.1.9   k8s-worker   <none>           <none>
 ```
 
 3. **Observe counter before migration**
@@ -69,14 +72,21 @@ metadata:
     namespace: default
 spec:
     podName: counter-migration-test
-    targetNode: k8s-master
+    targetNode: k8s-worker2
 EOF
 ```
 
 5. **Verify after migration**
 ```bash
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded podmigration/counter-migration --timeout=5m
+
+# Restored pod running on worker2
+kubectl get pods -o wide
+
+# First line should start from the point we triggered migration and pod was checkpointed
 kubectl exec -it counter-migration-test-restored -- head -n 1 /data/counter.log
-kubectl exec -it counter-migration-test-restored -- tail -n 5 /data/counter.log
+
+# Pod should continue running successfully
 kubectl logs -f counter-migration-test-restored
 ```
 Expected:

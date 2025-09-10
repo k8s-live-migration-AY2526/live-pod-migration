@@ -20,6 +20,9 @@ kubectl apply -f nginx.yaml
 
 2. Verify pod running on worker
 ```bash
+kubectl wait --for=condition=Ready pod/nginx-hostport --timeout=5m
+
+# Running on worker
 kubectl get pods -o wide
 ```
 
@@ -39,19 +42,22 @@ metadata:
   namespace: default
 spec:
   podName: nginx-hostport
-  targetNode: k8s-master
+  targetNode: k8s-worker2
 EOF
 ```
 
 5. Verify pod running on master
 ```bash
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded podmigration/nginx-hostport-migration --timeout=5m
+
+# Restored pod running on worker2
 kubectl get pods-o wide
 ```
 
 6. Test connectivity to nginx pod running on master
 ```bash
 # From outside VMs. Expected outcome: curl should succeed and return the result
-curl http://192.168.56.10:8080/
+curl http://192.168.56.12:8080/
 ```
 
 7. Cleanup

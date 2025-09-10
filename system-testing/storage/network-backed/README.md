@@ -47,12 +47,15 @@ kubectl apply -f redis-nfs.yaml
 
 2. **Verify Pod is running**
 ```bash
-kubectl get pods
+kubectl wait --for=condition=Ready pod/redis-nfs --timeout=5m
+
+# Running on worker
+kubectl get pods -o wide
 ```
 Expected:
 ```
-NAME       READY   STATUS    RESTARTS   AGE
-redis-nfs  1/1     Running   0          30s
+NAME        READY   STATUS    RESTARTS   AGE   IP           NODE         NOMINATED NODE   READINESS GATES
+redis-nfs   1/1     Running   0          50s   10.244.1.3   k8s-worker   <none>           <none>
 ```
 
 3. **Check Redis server logs before migration**
@@ -80,16 +83,17 @@ metadata:
     namespace: default
 spec:
     podName: redis-nfs
-    targetNode: k8s-master
+    targetNode: k8s-worker2
 EOF
 ```
 6. **Verify after migration**
-    - Check that the restored pod is running:
 ```bash
-kubectl get pods
-```
-    - Verify stored data still exists:
-```bash
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded podmigration/redis-nfs-migration --timeout=5m
+
+# Restored pod running on worker2
+kubectl get pods -o wide
+
+# Verify network-backed volume accessible
 kubectl exec redis-nfs-restored -- redis-cli GET mykey
 ```
       Expected output:
