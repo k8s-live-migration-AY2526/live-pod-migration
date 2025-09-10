@@ -75,7 +75,7 @@ Vagrant.configure("2") do |config|
     end
 
     worker2.vm.provision "ansible" do |ansible|
-      ansible.playbook = "playbooks/common.yml"
+      ansible.playbook = "playbooks/site-worker.yml"
       ansible.inventory_path = "playbooks/inventory"
     end
   end
