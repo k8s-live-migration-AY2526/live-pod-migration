@@ -6,7 +6,7 @@ This directory contains a simplified Vagrant setup suitable for testing the live
 
 - [Vagrant](https://www.vagrantup.com/downloads) installed
 - [VirtualBox](https://www.virtualbox.org/wiki/Downloads) or [Parallels](https://www.parallels.com/) installed
-- At least 8GB RAM available for VMs
+- Optional: At least 8GB RAM available for VMs, if you don't have that much free RAM, vagrant can still run, although you might experience some performance issues
 
 ## Cluster Architecture
 
