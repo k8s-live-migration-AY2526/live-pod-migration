@@ -24,8 +24,9 @@ import (
 type PodMigrationPhase string
 
 const (
+	MigrationPhasePrePullImages      PodMigrationPhase = "PrePullImages"
 	MigrationPhasePending            PodMigrationPhase = "Pending"
-	MigrationPhaseCheckpointing      PodMigrationPhase = "Checkpointing" 
+	MigrationPhaseCheckpointing      PodMigrationPhase = "Checkpointing"
 	MigrationPhaseCheckpointComplete PodMigrationPhase = "CheckpointComplete"
 	MigrationPhasePreparingImages    PodMigrationPhase = "PreparingImages"
 	MigrationPhaseRestoring          PodMigrationPhase = "Restoring"
@@ -51,12 +52,15 @@ type PodMigrationStatus struct {
 	// or error.
 	Message string `json:"message,omitempty"`
 
+	// EphemeralPullPodName is the name of the ephemeral pod used to pull images.
+	EphemeralPullPodName string `json:"ephemeralPullPodName,omitempty"`
+
 	// PodCheckpointRef lets PodMigration track the checkpoint it spawned/bound.
 	PodCheckpointRef *corev1.LocalObjectReference `json:"podCheckpointRef,omitempty"`
-	
+
 	// RestoredPodName is the name of the restored pod after migration.
 	RestoredPodName string `json:"restoredPodName,omitempty"`
-	
+
 	// CheckpointImages maps container names to their prepared OCI checkpoint image references.
 	CheckpointImages map[string]string `json:"checkpointImages,omitempty"`
 }
