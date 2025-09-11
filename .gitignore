@@ -35,5 +35,3 @@ vagrant_ansible_inventory
 Vagrantfile.local
 .vagrant_*
 *.box
-# Shared join script
-vagrant/setup.sh

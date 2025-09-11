@@ -7,7 +7,6 @@
     cri_socket: "unix:///var/run/crio/crio.sock"
     pod_subnet: "10.244.0.0/16"
     vagrant_user: "vagrant"
-    join_script_path: /tmp_sync/setup.sh
 
   tasks:
     - name: Ensure CRI-O and kubelet services are running
@@ -156,17 +155,6 @@
           shell: kubectl taint nodes --all node-role.kubernetes.io/control-plane-
           changed_when: false
           ignore_errors: true
-
-        - name: Generate kubeadm join command for workers
-          shell: kubeadm token create --print-join-command
-          register: join_command
-          changed_when: false
-
-        - name: Write kubeadm join command to shared folder
-          copy:
-            content: "{{ join_command.stdout }}"
-            dest: "{{ join_script_path }}"
-            mode: "0755"
 
     - name: Install Go controller tools
       block:
