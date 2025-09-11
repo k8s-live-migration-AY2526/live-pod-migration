@@ -18,8 +18,4 @@ echo "=== Deploying system (CRDs, RBAC, controller, agent DaemonSet) ==="
 make deploy IMG=localhost/controller:latest AGENT_IMG=localhost/checkpoint-agent:latest
 echo
 
-echo "=== Deploying shared storage for cross-node checkpoint access ==="
-./deploy-shared-storage.sh
-echo
-
 echo "=== Setup complete! ==="
