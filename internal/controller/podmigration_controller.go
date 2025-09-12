@@ -112,7 +112,7 @@ func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigr
 	}
 
 	// 4/5. Ensure PodCheckpoint exists and update status accordingly
-	checkpointName := podMigration.Name
+	checkpointName := podMigration.Name + "-" + strconv.FormatInt(time.Now().Unix(), 10)
 	var podCheckpoint lpmv1.PodCheckpoint
 	err := r.Get(ctx, client.ObjectKey{Namespace: podMigration.Namespace, Name: checkpointName}, &podCheckpoint)
 
