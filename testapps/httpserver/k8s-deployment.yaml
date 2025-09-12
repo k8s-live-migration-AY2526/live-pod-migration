@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+    name: httpserver
+    labels:
+        app: httpserver
+spec:
+    containers:
+        - name: httpserver
+          image: docker.io/hugenoob/httpserver:latest
+          ports:
+              - containerPort: 8080
