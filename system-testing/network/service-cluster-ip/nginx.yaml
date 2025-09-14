@@ -1,0 +1,27 @@
+# nginx pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-clusterip
+  labels:
+    app: nginx-clusterip
+spec:
+  nodeName: k8s-worker
+  containers:
+  - name: nginx
+    image: nginx:1.25
+    ports:
+    - containerPort: 80
+---
+# ClusterIP Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-clusterip-svc
+spec:
+  type: ClusterIP
+  selector:
+    app: nginx-clusterip
+  ports:
+  - port: 80          # Service port
+    targetPort: 80    # Pod container port
