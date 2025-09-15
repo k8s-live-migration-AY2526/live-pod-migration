@@ -25,7 +25,7 @@ type PodMigrationPhase string
 
 const (
 	MigrationPhasePending            PodMigrationPhase = "Pending"
-	MigrationPhaseCheckpointing      PodMigrationPhase = "Checkpointing" 
+	MigrationPhaseCheckpointing      PodMigrationPhase = "Checkpointing"
 	MigrationPhaseCheckpointComplete PodMigrationPhase = "CheckpointComplete"
 	MigrationPhasePreparingImages    PodMigrationPhase = "PreparingImages"
 	MigrationPhaseRestoring          PodMigrationPhase = "Restoring"
@@ -53,16 +53,19 @@ type PodMigrationStatus struct {
 
 	// PodCheckpointRef lets PodMigration track the checkpoint it spawned/bound.
 	PodCheckpointRef *corev1.LocalObjectReference `json:"podCheckpointRef,omitempty"`
-	
+
 	// RestoredPodName is the name of the restored pod after migration.
 	RestoredPodName string `json:"restoredPodName,omitempty"`
-	
+
 	// CheckpointImages maps container names to their prepared OCI checkpoint image references.
 	CheckpointImages map[string]string `json:"checkpointImages,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Pod Name",type=string,JSONPath=`.spec.podName`,description="Name of the Pod to migrate"
+// +kubebuilder:printcolumn:name="Target Node",type=string,JSONPath=`.spec.targetNode`,description="Target node for restore"
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`,description="Current lifecycle phase"
 
 // PodMigration is the Schema for the podmigrations API.
 type PodMigration struct {

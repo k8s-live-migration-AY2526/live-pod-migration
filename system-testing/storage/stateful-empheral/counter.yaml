@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: counter-migration-test
+spec:
+  nodeName: k8s-worker
+  containers:
+  - name: counter
+    image: busybox:1.35
+    command: 
+    - /bin/sh
+    - -c  
+    - |
+      echo 'Counter script starting'
+      COUNT=0
+      while true; do
+        COUNT=$((COUNT + 1))
+        TIMESTAMP=$(date)
+        echo "$TIMESTAMP: Count=$COUNT" | tee -a /data/counter.log
+        sleep 3
+      done
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    emptyDir: {}

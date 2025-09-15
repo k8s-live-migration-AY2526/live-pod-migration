@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-nfs-pvc
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: nfs-csi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: redis-nfs
+spec:
+  nodeName: k8s-worker
+  containers:
+  - name: redis
+    image: redis:7
+    volumeMounts:
+    - mountPath: /data
+      name: redis-data
+  volumes:
+  - name: redis-data
+    persistentVolumeClaim:
+      claimName: redis-nfs-pvc
