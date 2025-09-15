@@ -58,14 +58,14 @@ metadata:
     name: busybox-migration
     namespace: default
 spec:
-    podName: busybox-hlvb9 # Update this accordingly
+    podName: busybox-q75rr # Update this accordingly
     targetNode: k8s-worker2
 EOF
 ```
 
 4. **Verify after migration**
 ```bash
-kubectl wait --for=jsonpath='{.status.phase}'=Succeeded podmigration/busybox-migration --timeout=60s
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded podmigration/busybox-migration --timeout=5m
 
 kubectl get replicaset
 kubectl get pods -o wide
@@ -82,3 +82,8 @@ kubectl delete replicaset busybox --ignore-not-found=true
 kubectl delete pods -l app=busybox --ignore-not-found=true
 kubectl delete podmigration busybox-migration --ignore-not-found=true
 ```
+
+## Notes  
+- Restored pods (`*-restored`) are **not** managed by the ReplicaSet and must be cleaned up manually if no longer needed.  
+- The key reason behind this is that replica sets use `ownerReferences` to define pods owned and managed by it, the pods that are restored by our controller has `PodMigration` (i.e. the CRD used to trigger migration) as its owner
+- You can verify this via the command `kubectl get pod <pod_name> -o yaml`, and find the `ownerReferences` section under `metadata`.
