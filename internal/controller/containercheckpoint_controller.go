@@ -143,37 +143,29 @@ func (r *ContainerCheckpointReconciler) handleCheckpointingPhase(ctx context.Con
 
 	// Create content object if it doesn't exist
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			containerCheckpointContent = &lpmv1.ContainerCheckpointContent{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: contentName,
-				},
-				Spec: lpmv1.ContainerCheckpointContentSpec{
-					ContainerCheckpointRef: corev1.ObjectReference{
-						Namespace: containerCheckpoint.Namespace,
-						Name:      containerCheckpoint.Name,
-					},
-					PodNamespace:  containerCheckpoint.Namespace,
-					PodName:       containerCheckpoint.Spec.PodName,
-					ContainerName: containerCheckpoint.Spec.ContainerName,
-					ArtifactURI:   artifactURI,
-				},
-			}
-
-			if err := r.Create(ctx, containerCheckpointContent); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			// Bind content and mark checkpoint as ready immediately
-			now := metav1.Now()
-			containerCheckpoint.Status.BoundContentName = containerCheckpointContent.Name
-			containerCheckpoint.Status.Ready = true
-			containerCheckpoint.Status.Phase = lpmv1.ContainerCheckpointPhaseSucceeded
-			containerCheckpoint.Status.Message = "done"
-			containerCheckpoint.Status.CompletionTime = &now
-			return ctrl.Result{}, r.Status().Update(ctx, containerCheckpoint)
+		if !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, err
+
+		containerCheckpointContent = &lpmv1.ContainerCheckpointContent{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: contentName,
+			},
+			Spec: lpmv1.ContainerCheckpointContentSpec{
+				ContainerCheckpointRef: corev1.ObjectReference{
+					Namespace: containerCheckpoint.Namespace,
+					Name:      containerCheckpoint.Name,
+				},
+				PodNamespace:  containerCheckpoint.Namespace,
+				PodName:       containerCheckpoint.Spec.PodName,
+				ContainerName: containerCheckpoint.Spec.ContainerName,
+				ArtifactURI:   artifactURI,
+			},
+		}
+
+		if err := r.Create(ctx, containerCheckpointContent); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Content already exists, mark checkpoint as complete

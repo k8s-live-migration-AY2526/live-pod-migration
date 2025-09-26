@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,7 +113,7 @@ func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigr
 	}
 
 	// 4/5. Ensure PodCheckpoint exists and update status accordingly
-	checkpointName := podMigration.Name
+	checkpointName := podMigration.Name + "-" + strconv.FormatInt(time.Now().Unix(), 10)
 	var podCheckpoint lpmv1.PodCheckpoint
 	err := r.Get(ctx, client.ObjectKey{Namespace: podMigration.Namespace, Name: checkpointName}, &podCheckpoint)
 
@@ -403,8 +404,8 @@ func (r *PodMigrationReconciler) createRestoredPod(ctx context.Context, podMigra
 
 	// Change only what's absolutely necessary
 	restoredPod.ObjectMeta.Name = fmt.Sprintf("%s-restored", originalPod.Name)
-	restoredPod.ObjectMeta.ResourceVersion = ""  // Required for creation
-	restoredPod.ObjectMeta.UID = ""              // Required for creation
+	restoredPod.ObjectMeta.ResourceVersion = ""              // Required for creation
+	restoredPod.ObjectMeta.UID = ""                          // Required for creation
 	restoredPod.Spec.NodeName = podMigration.Spec.TargetNode // Target node
 
 	// Add migration tracking annotations
