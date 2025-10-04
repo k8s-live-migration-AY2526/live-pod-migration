@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -52,6 +53,8 @@ type PodMigrationReconciler struct {
 // +kubebuilder:rbac:groups=lpm.my.domain,resources=containercheckpointcontents,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
 func NewPodMigrationReconciler(c client.Client, scheme *runtime.Scheme) *PodMigrationReconciler {
 	return &PodMigrationReconciler{
@@ -383,29 +386,22 @@ func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMi
 
 	// Create restored pod if not already created
 	if podMigration.Status.RestoredPodName == "" {
-		restoredPod, err := r.createRestoredPod(ctx, podMigration)
-		if err != nil {
-			return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, fmt.Sprintf("failed to create restored pod: %v", err))
-		}
-
-		err = r.Create(ctx, restoredPod)
-		if err != nil {
-			if apierrors.IsAlreadyExists(err) {
-				logger.Info("Restored pod already exists", "pod", restoredPod.Name)
-			} else {
-				return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, fmt.Sprintf("failed to create restored pod: %v", err))
-			}
-		}
-
-		// Update status with restored pod name
-		podMigration.Status.RestoredPodName = restoredPod.Name
-		podMigration.Status.Message = "restored pod created"
-		if err := r.Status().Update(ctx, podMigration); err != nil {
+		var srcPod corev1.Pod
+		if err := r.Get(ctx, client.ObjectKey{Namespace: podMigration.Namespace, Name: podMigration.Spec.PodName}, &srcPod); err != nil {
 			return ctrl.Result{}, err
 		}
 
-		logger.Info("Restored pod created", "pod", restoredPod.Name)
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		owner := metav1.GetControllerOf(&srcPod)
+		if owner == nil {
+			return r.restorePod(ctx, podMigration)
+		}
+
+		switch owner.Kind {
+		case "StatefulSet":
+			return r.restoreStatefulSetPod(ctx, podMigration, &srcPod)
+		default:
+			return r.restorePod(ctx, podMigration)
+		}
 	}
 
 	// Check restored pod status
@@ -442,6 +438,100 @@ func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMi
 		logger.Info("Restored pod in progress", "pod", restoredPod.Name, "phase", restoredPod.Status.Phase)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
+}
+
+func (r *PodMigrationReconciler) restorePod(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	restoredPod, err := r.createRestoredPod(ctx, podMigration)
+	if err != nil {
+		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, fmt.Sprintf("failed to create restored pod: %v", err))
+	}
+
+	err = r.Create(ctx, restoredPod)
+	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			logger.Info("Restored pod already exists", "pod", restoredPod.Name)
+		} else {
+			return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, fmt.Sprintf("failed to create restored pod: %v", err))
+		}
+	}
+
+	// Update status with restored pod name
+	podMigration.Status.RestoredPodName = restoredPod.Name
+	podMigration.Status.Message = "restored pod created"
+	if err := r.Status().Update(ctx, podMigration); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	logger.Info("Restored pod created", "pod", restoredPod.Name)
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+func (r *PodMigrationReconciler) restoreStatefulSetPod(ctx context.Context, podMigration *lpmv1.PodMigration, srcPod *corev1.Pod) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	logger.Info("Restoring StatefulSet pod", "srcPod", srcPod)
+
+	if err := r.patchStatefulSetTemplate(ctx, srcPod, podMigration); err != nil {
+		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed,
+			fmt.Sprintf("failed to patch StatefulSet: %v", err))
+	}
+
+	// Delete the original pod, controller will recreate with patched template
+	if err := r.Delete(ctx, srcPod); err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, err
+	}
+
+	podMigration.Status.RestoredPodName = srcPod.Name
+	podMigration.Status.Message = "waiting for StatefulSet to recreate pod with checkpoint image"
+	if err := r.Status().Update(ctx, podMigration); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+func (r *PodMigrationReconciler) patchStatefulSetTemplate(ctx context.Context, srcPod *corev1.Pod, podMigration *lpmv1.PodMigration) error {
+	logger := log.FromContext(ctx)
+
+	sts := &appsv1.StatefulSet{}
+	owner := metav1.GetControllerOf(srcPod)
+	if owner == nil {
+		return fmt.Errorf("pod %s/%s has no controller", srcPod.Namespace, srcPod.Name)
+	}
+	if err := r.Get(ctx, client.ObjectKey{Namespace: srcPod.Namespace, Name: owner.Name}, sts); err != nil {
+		return err
+	}
+
+	patched := sts.DeepCopy()
+
+	// Ensure update strategy is OnDelete so deleting a single pod results in recreation
+	patched.Spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{
+		Type: appsv1.OnDeleteStatefulSetStrategyType,
+	}
+
+	// Update containers to use checkpoint images
+	for i, c := range patched.Spec.Template.Spec.Containers {
+		if img, ok := podMigration.Status.CheckpointImages[c.Name]; ok {
+			patched.Spec.Template.Spec.Containers[i].Image = img
+			patched.Spec.Template.Spec.Containers[i].ImagePullPolicy = corev1.PullNever
+		}
+	}
+
+	if patched.Spec.Template.Labels == nil {
+		patched.Spec.Template.Labels = map[string]string{}
+	}
+	patched.Spec.Template.Labels["migration-job"] = podMigration.Name
+
+	// Constrain placement to target node (via nodeSelector)
+	if podMigration.Spec.TargetNode != "" {
+		if patched.Spec.Template.Spec.NodeSelector == nil {
+			patched.Spec.Template.Spec.NodeSelector = map[string]string{}
+		}
+		patched.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"] = podMigration.Spec.TargetNode
+	}
+
+	logger.Info("Patched StatefulSet template", "patched", patched)
+	return r.Patch(ctx, patched, client.MergeFrom(sts))
 }
 
 func (r *PodMigrationReconciler) handleCompletedOrFailedPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
