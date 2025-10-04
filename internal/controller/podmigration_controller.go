@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -170,6 +171,17 @@ func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigr
 	// 2. Validate source Pod running
 	if srcPod.Status.Phase != corev1.PodRunning {
 		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, "source pod not running")
+	}
+
+	// 2.5. Detect StatefulSet pod
+	if !podMigration.Spec.IsStatefulSet {
+		if owner := metav1.GetControllerOf(&srcPod); owner != nil && owner.Kind == "StatefulSet" {
+			podMigration.Spec.IsStatefulSet = true
+			if err := r.Update(ctx, podMigration); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to update StatefulSet flag: %w", err)
+			}
+			logger.Info("Detected StatefulSet pod, updated migration spec", "pod", srcPod.Name, "statefulSet", owner.Name)
+		}
 	}
 
 	// 3. If target node requested, validate it exists
@@ -382,26 +394,44 @@ func (r *PodMigrationReconciler) handlePreparingImagesPhase(ctx context.Context,
 
 func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Handling Restoring phase for PodMigration", "name", podMigration.Name)
+	logger.Info("Handling Restoring phase for PodMigration", "name", podMigration.Name, "isStatefulSet", podMigration.Spec.IsStatefulSet)
+
+	if podMigration.Spec.IsStatefulSet {
+		return r.handleStatefulSetRestoration(ctx, podMigration)
+	} else {
+		return r.handlePodRestoration(ctx, podMigration)
+	}
+}
+
+func (r *PodMigrationReconciler) handlePodRestoration(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	logger.Info("Handling pod restoration", "podName", podMigration.Spec.PodName)
 
 	// Create restored pod if not already created
 	if podMigration.Status.RestoredPodName == "" {
-		var srcPod corev1.Pod
-		if err := r.Get(ctx, client.ObjectKey{Namespace: podMigration.Namespace, Name: podMigration.Spec.PodName}, &srcPod); err != nil {
+		restoredPod, err := r.createRestoredPod(ctx, podMigration)
+		if err != nil {
+			return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, fmt.Sprintf("failed to create restored pod: %v", err))
+		}
+
+		err = r.Create(ctx, restoredPod)
+		if err != nil {
+			if apierrors.IsAlreadyExists(err) {
+				logger.Info("Restored pod already exists", "pod", restoredPod.Name)
+			} else {
+				return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, fmt.Sprintf("failed to create restored pod: %v", err))
+			}
+		}
+
+		// Update status with restored pod name
+		podMigration.Status.RestoredPodName = restoredPod.Name
+		podMigration.Status.Message = "restored pod created"
+		if err := r.Status().Update(ctx, podMigration); err != nil {
 			return ctrl.Result{}, err
 		}
 
-		owner := metav1.GetControllerOf(&srcPod)
-		if owner == nil {
-			return r.restorePod(ctx, podMigration)
-		}
-
-		switch owner.Kind {
-		case "StatefulSet":
-			return r.restoreStatefulSetPod(ctx, podMigration, &srcPod)
-		default:
-			return r.restorePod(ctx, podMigration)
-		}
+		logger.Info("Restored pod created", "pod", restoredPod.Name)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
 	// Check restored pod status
@@ -440,66 +470,116 @@ func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMi
 	}
 }
 
-func (r *PodMigrationReconciler) restorePod(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
+func (r *PodMigrationReconciler) handleStatefulSetRestoration(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+	logger.Info("Handling StatefulSet pod restoration", "podName", podMigration.Spec.PodName)
 
-	restoredPod, err := r.createRestoredPod(ctx, podMigration)
-	if err != nil {
-		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, fmt.Sprintf("failed to create restored pod: %v", err))
-	}
-
-	err = r.Create(ctx, restoredPod)
-	if err != nil {
-		if apierrors.IsAlreadyExists(err) {
-			logger.Info("Restored pod already exists", "pod", restoredPod.Name)
-		} else {
-			return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, fmt.Sprintf("failed to create restored pod: %v", err))
+	var srcPod corev1.Pod
+	if err := r.Get(ctx, client.ObjectKey{Namespace: podMigration.Namespace, Name: podMigration.Spec.PodName}, &srcPod); err != nil {
+		if apierrors.IsNotFound(err) {
+			logger.Info("Pod not found during StatefulSet restoration", "pod", podMigration.Spec.PodName)
+			podMigration.Status.Message = "waiting for StatefulSet to recreate pod"
+			if statusErr := r.Status().Update(ctx, podMigration); statusErr != nil {
+				return ctrl.Result{}, statusErr
+			}
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
-	}
-
-	// Update status with restored pod name
-	podMigration.Status.RestoredPodName = restoredPod.Name
-	podMigration.Status.Message = "restored pod created"
-	if err := r.Status().Update(ctx, podMigration); err != nil {
 		return ctrl.Result{}, err
 	}
 
-	logger.Info("Restored pod created", "pod", restoredPod.Name)
-	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
-}
-
-func (r *PodMigrationReconciler) restoreStatefulSetPod(ctx context.Context, podMigration *lpmv1.PodMigration, srcPod *corev1.Pod) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-	logger.Info("Restoring StatefulSet pod", "srcPod", srcPod)
-
-	if err := r.patchStatefulSetTemplate(ctx, srcPod, podMigration); err != nil {
-		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed,
-			fmt.Sprintf("failed to patch StatefulSet: %v", err))
+	// Patch StatefulSet template if not already done
+	if podMigration.Status.StatefulSetRestore == nil {
+		if err := r.patchStatefulSetTemplate(ctx, &srcPod, podMigration); err != nil {
+			return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed,
+				fmt.Sprintf("failed to patch StatefulSet: %v", err))
+		}
+		logger.Info("StatefulSet template patched", "statefulSet", podMigration.Status.StatefulSetRestore.Name)
 	}
 
-	// Delete the original pod, controller will recreate with patched template
-	if err := r.Delete(ctx, srcPod); err != nil && !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, err
+	// Check if this is the original pod or a recreated pod using UID
+	originalPodUID := podMigration.Status.StatefulSetRestore.OriginalPodUID
+
+	if string(srcPod.UID) == originalPodUID {
+		// Delete the original pod (StatefulSet will recreate it)
+		logger.Info("Deleting original pod", "pod", srcPod.Name, "uid", srcPod.UID)
+		if err := r.Delete(ctx, &srcPod); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("failed to delete original pod: %w", err)
+		}
+
+		podMigration.Status.RestoredPodName = srcPod.Name // Same ordinal name required
+		podMigration.Status.Message = "original pod deletion requested, waiting for StatefulSet to recreate"
+		if err := r.Status().Update(ctx, podMigration); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	podMigration.Status.RestoredPodName = srcPod.Name
-	podMigration.Status.Message = "waiting for StatefulSet to recreate pod with checkpoint image"
-	if err := r.Status().Update(ctx, podMigration); err != nil {
-		return ctrl.Result{}, err
+	// Pod recreated with new template, observe status
+	logger.Info("Observing recreated pod", "pod", srcPod.Name, "uid", srcPod.UID, "phase", srcPod.Status.Phase)
+
+	switch srcPod.Status.Phase {
+	case corev1.PodRunning:
+		// Verify that the pod is using checkpoint images
+		if r.isPodUsingCheckpointImages(&srcPod, podMigration) {
+			logger.Info("StatefulSet pod successfully recreated with checkpoint images", "pod", srcPod.Name)
+			return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseSucceeded, "StatefulSet pod successfully restored and running")
+		} else {
+			logger.Error(nil, "Recreated pod is not using checkpoint images", "pod", srcPod.Name)
+			return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, "recreated pod is not using checkpoint images")
+		}
+
+	case corev1.PodFailed:
+		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, "recreated pod failed to start")
+
+	case corev1.PodPending:
+		logger.Info("Recreated pod is pending", "pod", srcPod.Name, "reason", srcPod.Status.Reason)
+		podMigration.Status.Message = "recreated pod is starting"
+		if err := r.Status().Update(ctx, podMigration); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+
+	default:
+		logger.Info("Recreated pod in progress", "pod", srcPod.Name, "phase", srcPod.Status.Phase)
+		podMigration.Status.Message = fmt.Sprintf("recreated pod phase: %s", srcPod.Status.Phase)
+		if err := r.Status().Update(ctx, podMigration); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
-	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
 func (r *PodMigrationReconciler) patchStatefulSetTemplate(ctx context.Context, srcPod *corev1.Pod, podMigration *lpmv1.PodMigration) error {
 	logger := log.FromContext(ctx)
 
-	sts := &appsv1.StatefulSet{}
 	owner := metav1.GetControllerOf(srcPod)
 	if owner == nil {
 		return fmt.Errorf("pod %s/%s has no controller", srcPod.Namespace, srcPod.Name)
 	}
+
+	sts := &appsv1.StatefulSet{}
 	if err := r.Get(ctx, client.ObjectKey{Namespace: srcPod.Namespace, Name: owner.Name}, sts); err != nil {
 		return err
+	}
+
+	// Store the original template
+	if podMigration.Status.StatefulSetRestore == nil {
+		originalTemplateBytes, err := json.Marshal(sts.Spec.Template)
+		if err != nil {
+			return fmt.Errorf("failed to encode original StatefulSet template: %w", err)
+		}
+		originalTemplate := string(originalTemplateBytes)
+		podMigration.Status.StatefulSetRestore = &lpmv1.StatefulSetRestoreInfo{
+			Name:             sts.Name,
+			OriginalTemplate: originalTemplate,
+			OriginalPodUID:   string(srcPod.UID),
+		}
+
+		// Update the status to persist the original template
+		if err := r.Status().Update(ctx, podMigration); err != nil {
+			return fmt.Errorf("failed to update podMigration with original template: %w", err)
+		}
+		logger.Info("Stored original StatefulSet template", "statefulSet", sts.Name)
 	}
 
 	patched := sts.DeepCopy()
@@ -509,7 +589,6 @@ func (r *PodMigrationReconciler) patchStatefulSetTemplate(ctx context.Context, s
 		Type: appsv1.OnDeleteStatefulSetStrategyType,
 	}
 
-	// Update containers to use checkpoint images
 	for i, c := range patched.Spec.Template.Spec.Containers {
 		if img, ok := podMigration.Status.CheckpointImages[c.Name]; ok {
 			patched.Spec.Template.Spec.Containers[i].Image = img
@@ -534,8 +613,62 @@ func (r *PodMigrationReconciler) patchStatefulSetTemplate(ctx context.Context, s
 	return r.Patch(ctx, patched, client.MergeFrom(sts))
 }
 
+func (r *PodMigrationReconciler) restoreStatefulSetTemplate(ctx context.Context, podMigration *lpmv1.PodMigration) error {
+	logger := log.FromContext(ctx)
+
+	if podMigration.Status.StatefulSetRestore == nil {
+		logger.Info("No StatefulSet restore info stored, skipping restore")
+		return nil
+	}
+
+	sts := &appsv1.StatefulSet{}
+	statefulSetKey := client.ObjectKey{
+		Namespace: podMigration.Namespace,
+		Name:      podMigration.Status.StatefulSetRestore.Name,
+	}
+
+	if err := r.Get(ctx, statefulSetKey, sts); err != nil {
+		if apierrors.IsNotFound(err) {
+			logger.Info("StatefulSet not found, skipping template restore", "statefulSet", statefulSetKey.Name)
+			return nil
+		}
+		return fmt.Errorf("failed to get StatefulSet: %w", err)
+	}
+
+	var originalTemplate corev1.PodTemplateSpec
+	if err := json.Unmarshal([]byte(podMigration.Status.StatefulSetRestore.OriginalTemplate), &originalTemplate); err != nil {
+		return fmt.Errorf("failed to unmarshal original StatefulSet template: %w", err)
+	}
+
+	patched := sts.DeepCopy()
+	patched.Spec.Template = originalTemplate
+
+	if err := r.Patch(ctx, patched, client.MergeFrom(sts)); err != nil {
+		return fmt.Errorf("failed to patch StatefulSet with original template: %w", err)
+	}
+
+	logger.Info("Successfully restored original StatefulSet template", "statefulSet", sts.Name)
+	return nil
+}
+
 func (r *PodMigrationReconciler) handleCompletedOrFailedPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
-	// Logic to handle the Succeeded or Failed phase
+	logger := log.FromContext(ctx)
+
+	if podMigration.Status.StatefulSetRestore != nil {
+		if err := r.restoreStatefulSetTemplate(ctx, podMigration); err != nil {
+			logger.Error(err, "Failed to restore StatefulSet template", "statefulSet", podMigration.Status.StatefulSetRestore.Name)
+			// Don't fail the migration just because template restore failed
+		} else {
+			logger.Info("StatefulSet template restored successfully", "statefulSet", podMigration.Status.StatefulSetRestore.Name)
+
+			// Clear the stored template since we've restored it
+			podMigration.Status.StatefulSetRestore = nil
+			if err := r.Status().Update(ctx, podMigration); err != nil {
+				logger.Error(err, "Failed to clear StatefulSet restore info from status")
+			}
+		}
+	}
+
 	// No further action needed for completed migrations
 	return ctrl.Result{}, nil
 }
@@ -669,6 +802,24 @@ func (r *PodMigrationReconciler) getOriginalPod(ctx context.Context, podMigratio
 	}, &originalPod)
 
 	return &originalPod, err
+}
+
+func (r *PodMigrationReconciler) isPodUsingCheckpointImages(pod *corev1.Pod, podMigration *lpmv1.PodMigration) bool {
+	if podMigration.Status.CheckpointImages == nil {
+		return false
+	}
+
+	for _, container := range pod.Spec.Containers {
+		expectedImage, exists := podMigration.Status.CheckpointImages[container.Name]
+		if !exists {
+			return false
+		}
+		if container.Image != expectedImage {
+			return false
+		}
+	}
+
+	return true
 }
 
 func (r *PodMigrationReconciler) deleteOriginalPod(ctx context.Context, podMigration *lpmv1.PodMigration) error {
