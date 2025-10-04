@@ -14,7 +14,20 @@ spec:
     singular: podmigration
   scope: Namespaced
   versions:
-  - name: v1
+  - additionalPrinterColumns:
+    - description: Name of the Pod to migrate
+      jsonPath: .spec.podName
+      name: Pod Name
+      type: string
+    - description: Target node for restore
+      jsonPath: .spec.targetNode
+      name: Target Node
+      type: string
+    - description: Current lifecycle phase
+      jsonPath: .status.phase
+      name: Phase
+      type: string
+    name: v1
     schema:
       openAPIV3Schema:
         description: PodMigration is the Schema for the podmigrations API.
@@ -53,6 +66,16 @@ spec:
           status:
             description: PodMigrationStatus defines the observed state of PodMigration.
             properties:
+              checkpointImages:
+                additionalProperties:
+                  type: string
+                description: CheckpointImages maps container names to their prepared
+                  OCI checkpoint image references.
+                type: object
+              ephemeralPullPodName:
+                description: EphemeralPullPodName is the name of the ephemeral pod
+                  used to pull images.
+                type: string
               message:
                 description: |-
                   Message is a human-readable summary of the most recent state transition
@@ -76,6 +99,10 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              restoredPodName:
+                description: RestoredPodName is the name of the restored pod after
+                  migration.
+                type: string
             type: object
         type: object
     served: true
