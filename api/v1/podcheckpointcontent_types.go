@@ -17,6 +17,8 @@ limitations under the License.
 package v1
 
 import (
+	"k8s.io/apimachinery/pkg/runtime"
+
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -37,6 +39,10 @@ type PodCheckpointContentSpec struct {
 	// ContainerContents: list of cluster-scoped ContainerCheckpointContent object names
 	// (kind is implied; group/version same API group).
 	ContainerContents []corev1.LocalObjectReference `json:"containerContents"`
+
+	// PodSpecSnapshot is the snapshot of the original PodSpec taken at checkpoint time.
+	// The PodRestore logic can use this snapshot to reconstruct a restored Pod reliably.
+	PodSpecSnapshot *runtime.RawExtension `json:"podSpecSnapshot"`
 }
 
 // PodCheckpointContentStatus defines the observed state of PodCheckpointContent.

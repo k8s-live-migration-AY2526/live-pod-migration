@@ -18,10 +18,12 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
+	"time"
+
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -168,7 +170,7 @@ func (r *PodCheckpointReconciler) handleCheckpointingPhase(ctx context.Context, 
 				allDone = false // succeeded but no content, wait
 			}
 		case lpmv1.ContainerCheckpointPhaseFailed:
-			allDone = true  // we can finish evaluation now
+			allDone = true // we can finish evaluation now
 			allSucceeded = false
 		default: // Pending or Running or empty phase
 			allDone = false
@@ -192,6 +194,20 @@ func (r *PodCheckpointReconciler) handleCheckpointingPhase(ctx context.Context, 
 		var podCheckpointContent lpmv1.PodCheckpointContent
 		err := r.Get(ctx, client.ObjectKey{Name: podCheckpointContentName, Namespace: podCheckpoint.Namespace}, &podCheckpointContent)
 		if apierrors.IsNotFound(err) {
+			// get original pod to capture PodSpec snapshot
+			var originalPod corev1.Pod
+			if podCheckpoint.Spec.PodName != nil {
+				if getErr := r.Get(ctx, client.ObjectKey{Namespace: podCheckpoint.Namespace, Name: *podCheckpoint.Spec.PodName}, &originalPod); getErr != nil {
+					if apierrors.IsNotFound(getErr) {
+						return ctrl.Result{}, r.updatePhase(ctx, podCheckpoint, lpmv1.PodCheckpointPhaseFailed, "source pod not found when creating content")
+					}
+					return ctrl.Result{}, getErr
+				}
+			}
+			b, err := json.Marshal(originalPod.Spec)
+			if err != nil {
+				return ctrl.Result{}, r.updatePhase(ctx, podCheckpoint, lpmv1.PodCheckpointPhaseFailed, "failed to marshal PodSpec snapshot: "+err.Error())
+			}
 			// build new content
 			podCheckpointContent = lpmv1.PodCheckpointContent{
 				ObjectMeta: metav1.ObjectMeta{
@@ -206,9 +222,10 @@ func (r *PodCheckpointReconciler) handleCheckpointingPhase(ctx context.Context, 
 						Namespace: podCheckpoint.Namespace,
 						Name:      podCheckpoint.Name,
 					},
-					PodNamespace: podCheckpoint.Namespace,
-					PodName:      *podCheckpoint.Spec.PodName,
+					PodNamespace:      podCheckpoint.Namespace,
+					PodName:           *podCheckpoint.Spec.PodName,
 					ContainerContents: containerContentNames,
+					PodSpecSnapshot:   &runtime.RawExtension{Raw: b},
 				},
 			}
 			if err := r.Create(ctx, &podCheckpointContent); err != nil {
