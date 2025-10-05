@@ -8,10 +8,21 @@ rules:
   - ""
   resources:
   - nodes
-  - pods
   verbs:
   - get
   - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
   - watch
 - apiGroups:
   - lpm.my.domain
@@ -21,6 +32,7 @@ rules:
   - podcheckpointcontents
   - podcheckpoints
   - podmigrations
+  - podrestores
   verbs:
   - create
   - delete
@@ -37,6 +49,7 @@ rules:
   - podcheckpointcontents/status
   - podcheckpoints/status
   - podmigrations/status
+  - podrestores/status
   verbs:
   - get
   - patch
@@ -47,5 +60,6 @@ rules:
   - containercheckpoints/finalizers
   - podcheckpoints/finalizers
   - podmigrations/finalizers
+  - podrestores/finalizers
   verbs:
   - update

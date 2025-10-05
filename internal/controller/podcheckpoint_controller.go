@@ -204,9 +204,9 @@ func (r *PodCheckpointReconciler) handleCheckpointingPhase(ctx context.Context, 
 					return ctrl.Result{}, getErr
 				}
 			}
-			b, err := json.Marshal(originalPod.Spec)
+			b, err := json.Marshal(originalPod)
 			if err != nil {
-				return ctrl.Result{}, r.updatePhase(ctx, podCheckpoint, lpmv1.PodCheckpointPhaseFailed, "failed to marshal PodSpec snapshot: "+err.Error())
+				return ctrl.Result{}, r.updatePhase(ctx, podCheckpoint, lpmv1.PodCheckpointPhaseFailed, "failed to marshal Pod snapshot: "+err.Error())
 			}
 			// build new content
 			podCheckpointContent = lpmv1.PodCheckpointContent{
@@ -225,7 +225,7 @@ func (r *PodCheckpointReconciler) handleCheckpointingPhase(ctx context.Context, 
 					PodNamespace:      podCheckpoint.Namespace,
 					PodName:           *podCheckpoint.Spec.PodName,
 					ContainerContents: containerContentNames,
-					PodSpecSnapshot:   &runtime.RawExtension{Raw: b},
+					PodSnapshot:       &runtime.RawExtension{Raw: b},
 				},
 			}
 			if err := r.Create(ctx, &podCheckpointContent); err != nil {
