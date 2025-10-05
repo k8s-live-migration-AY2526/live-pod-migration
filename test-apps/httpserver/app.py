@@ -72,8 +72,6 @@ def session_counter():
     return jsonify({"session_count": session["count"]}), 200
 
 
-import socket
-
 def get_pod_ip():
     try:
         # open a dummy socket connection to a well-known address

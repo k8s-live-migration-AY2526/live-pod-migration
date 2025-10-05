@@ -52,7 +52,7 @@ sudo podman load -i /tmp_sync/httpserver.tar
 sudo podman push localhost/httpserver:latest containers-storage:httpserver:latest
 
 # Deploy to Kubernetes
-kubectl apply -f k8s-deployment.yaml
+kubectl apply -f deployment.yaml
 
 -----
 
@@ -61,7 +61,7 @@ sudo podman build --no-cache -t $IMAGE_NAME:$TAG .
 sudo podman push $IMAGE_NAME:$TAG
 
 # Then deploy with:
-kubectl apply -f k8s-deployment.yaml
+kubectl apply -f deployment.yaml
 ```
 
 ### Access the service:

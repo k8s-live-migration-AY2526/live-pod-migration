@@ -2,18 +2,20 @@
 
 A simple Deployment with nginx and busybox containers for testing pod migration.
 
-Expected behaviour: When a pod is migrated, the busybox container should continue printing the date every 30 seconds without interruption.
+Expected behaviour: When a pod is migrated, the busybox container should continue printing the date every 10 seconds without interruption.
 
 ## Deploy
 
 ```bash
-kubectl apply -f deployment.yaml
+kubectl apply -f one-replica.yaml
+// or
+kubectl apply -f two-replica.yaml
 ```
 
 ## Get pod name and migrate
 
 ```bash
-kubectl get pods -l app=simple-test
+kubectl get pods -l app=deployment-test
 # Copy one of the pod names and update migration.yaml
 kubectl apply -f migration.yaml
 ```
