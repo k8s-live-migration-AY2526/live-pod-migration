@@ -54,8 +54,8 @@ type PodMigrationReconciler struct {
 // +kubebuilder:rbac:groups=lpm.my.domain,resources=containercheckpointcontents,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
-// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;update;patch
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;update;patch
 
 func NewPodMigrationReconciler(c client.Client, scheme *runtime.Scheme) *PodMigrationReconciler {
 	return &PodMigrationReconciler{
@@ -609,7 +609,6 @@ func (r *PodMigrationReconciler) patchStatefulSetTemplate(ctx context.Context, s
 		patched.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"] = podMigration.Spec.TargetNode
 	}
 
-	logger.Info("Patched StatefulSet template", "patched", patched)
 	return r.Patch(ctx, patched, client.MergeFrom(sts))
 }
 
