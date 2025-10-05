@@ -112,9 +112,9 @@ spec:
                 description: PodNamespace / PodName captured for convenience (duplicate
                   of ref target; aids querying).
                 type: string
-              podSpecSnapshot:
+              podSnapshot:
                 description: |-
-                  PodSpecSnapshot is the snapshot of the original PodSpec taken at checkpoint time.
+                  PodSnapshot is the snapshot of the original Pod at checkpoint time.
                   The PodRestore logic can use this snapshot to reconstruct a restored Pod reliably.
                 type: object
                 x-kubernetes-preserve-unknown-fields: true
@@ -123,7 +123,7 @@ spec:
             - podCheckpointRef
             - podName
             - podNamespace
-            - podSpecSnapshot
+            - podSnapshot
             type: object
           status:
             description: PodCheckpointContentStatus defines the observed state of

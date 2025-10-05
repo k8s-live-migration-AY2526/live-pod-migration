@@ -40,9 +40,9 @@ type PodCheckpointContentSpec struct {
 	// (kind is implied; group/version same API group).
 	ContainerContents []corev1.LocalObjectReference `json:"containerContents"`
 
-	// PodSpecSnapshot is the snapshot of the original PodSpec taken at checkpoint time.
+	// PodSnapshot is the snapshot of the original Pod at checkpoint time.
 	// The PodRestore logic can use this snapshot to reconstruct a restored Pod reliably.
-	PodSpecSnapshot *runtime.RawExtension `json:"podSpecSnapshot"`
+	PodSnapshot *runtime.RawExtension `json:"podSnapshot"`
 }
 
 // PodCheckpointContentStatus defines the observed state of PodCheckpointContent.
