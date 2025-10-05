@@ -6,7 +6,7 @@ metadata:
     app: statefulset-test
 spec:
   serviceName: statefulset-test-service
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: statefulset-test
