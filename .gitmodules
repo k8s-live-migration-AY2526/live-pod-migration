@@ -1,0 +1,6 @@
+[submodule "kubernetes"]
+	path = kubernetes
+	url = https://github.com/k8s-live-migration-AY2526/kubernetes.git
+[submodule "cri-o"]
+	path = cri-o
+	url = https://github.com/k8s-live-migration-AY2526/cri-o.git
