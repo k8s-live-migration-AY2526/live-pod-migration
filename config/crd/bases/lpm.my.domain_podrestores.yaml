@@ -4,33 +4,33 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.17.0
-  name: podmigrations.lpm.my.domain
+  name: podrestores.lpm.my.domain
 spec:
   group: lpm.my.domain
   names:
-    kind: PodMigration
-    listKind: PodMigrationList
-    plural: podmigrations
-    singular: podmigration
+    kind: PodRestore
+    listKind: PodRestoreList
+    plural: podrestores
+    singular: podrestore
   scope: Namespaced
   versions:
   - additionalPrinterColumns:
-    - description: Name of the Pod to migrate
-      jsonPath: .spec.podName
-      name: Pod Name
+    - description: Referenced PodCheckpointContent
+      jsonPath: .spec.podCheckpointContentRef.name
+      name: PodCheckpointContentName
       type: string
     - description: Target node for restore
       jsonPath: .spec.targetNode
-      name: Target Node
+      name: TargetNode
       type: string
-    - description: Current lifecycle phase
+    - description: Current phase of the restore
       jsonPath: .status.phase
       name: Phase
       type: string
     name: v1
     schema:
       openAPIV3Schema:
-        description: PodMigration is the Schema for the podmigrations API.
+        description: PodRestore is the Schema for the podrestores API
         properties:
           apiVersion:
             description: |-
@@ -50,43 +50,12 @@ spec:
           metadata:
             type: object
           spec:
-            description: PodMigrationSpec defines the desired state of PodMigration.
+            description: PodRestoreSpec defines the desired state of PodRestore.
             properties:
-              podName:
-                description: Name of the Pod to migrate (required).
-                type: string
-              targetNode:
-                description: TargetNode is the name of the node where the Pod should
-                  be restored.
-                type: string
-            required:
-            - podName
-            - targetNode
-            type: object
-          status:
-            description: PodMigrationStatus defines the observed state of PodMigration.
-            properties:
-              checkpointImages:
-                additionalProperties:
-                  type: string
-                description: CheckpointImages maps container names to their prepared
-                  OCI checkpoint image references.
-                type: object
-              ephemeralPullPodName:
-                description: EphemeralPullPodName is the name of the ephemeral pod
-                  used to pull images.
-                type: string
-              message:
+              podCheckpointContentRef:
                 description: |-
-                  Message is a human-readable summary of the most recent state transition
-                  or error.
-                type: string
-              phase:
-                description: Phase is the high-level lifecycle marker.
-                type: string
-              podCheckpointRef:
-                description: PodCheckpointRef lets PodMigration track the checkpoint
-                  it spawned/bound.
+                  PodCheckpointContentRef references the PodCheckpointContent that holds
+                  checkpoint artifacts and the podSpecSnapshot used for restore.
                 properties:
                   name:
                     default: ""
@@ -99,9 +68,41 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              targetNode:
+                description: |-
+                  TargetNode optionally pins the restored Pod to a specific node.
+                  If empty, the scheduler will decide placement.
+                type: string
+            required:
+            - podCheckpointContentRef
+            type: object
+          status:
+            description: PodRestoreStatus defines the observed state of PodRestore.
+            properties:
+              completionTime:
+                description: CompletionTime indicates when restore finished (on terminal
+                  states).
+                format: date-time
+                type: string
+              imageMapping:
+                additionalProperties:
+                  type: string
+                description: ImageMapping maps container name -> prepared image reference
+                  used during restore.
+                type: object
+              message:
+                description: Message is a human-readable status or error.
+                type: string
+              phase:
+                description: Phase is the high-level lifecycle state.
+                type: string
               restoredPodName:
-                description: RestoredPodName is the name of the restored pod after
-                  migration.
+                description: RestoredPodName is the name of the Pod created by the
+                  restore controller.
+                type: string
+              startTime:
+                description: StartTime indicates when restore began.
+                format: date-time
                 type: string
             type: object
         type: object
