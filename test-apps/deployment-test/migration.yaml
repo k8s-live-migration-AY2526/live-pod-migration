@@ -1,0 +1,8 @@
+apiVersion: lpm.my.domain/v1
+kind: PodMigration
+metadata:
+    name: deployment-test-migration
+    namespace: default
+spec:
+    podName: # Set this to one of the pod names from: kubectl get pods -l app=deployment-test
+    targetNode: k8s-master

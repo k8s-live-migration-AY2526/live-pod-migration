@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: statefulset-test
+  labels:
+    app: statefulset-test
+spec:
+  serviceName: statefulset-test-service
+  replicas: 3
+  selector:
+    matchLabels:
+      app: statefulset-test
+  template:
+    metadata:
+      labels:
+        app: statefulset-test
+    spec:
+      containers:
+        - name: busybox
+          image: busybox:1.35
+          command: ["/bin/sh", "-c", "i=0; while true; do echo $(date) Pod: $HOSTNAME Counter: $i | tee -a /data/log.txt; i=$((i+1)); sleep 10; done"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: statefulset-test-service
+spec:
+  clusterIP: None
+  selector:
+    app: statefulset-test
+  ports:
+    - port: 80
+      targetPort: 80

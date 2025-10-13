@@ -1,0 +1,8 @@
+apiVersion: lpm.my.domain/v1
+kind: PodMigration
+metadata:
+  name: statefulset-test-migration
+  namespace: default
+spec:
+  podName: statefulset-test-0  # StatefulSet pods have predictable names
+  targetNode: k8s-master

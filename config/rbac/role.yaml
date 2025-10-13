@@ -13,6 +13,16 @@ rules:
   - list
   - watch
 - apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  - deployments
+  verbs:
+  - get
+  - list
+  - update
+  - patch
+- apiGroups:
   - ""
   resources:
   - pods
