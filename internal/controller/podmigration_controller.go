@@ -87,8 +87,6 @@ func (r *PodMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.handleCheckpointingPhase(ctx, &podMigration)
 	case lpmv1.MigrationPhaseCheckpointComplete:
 		return r.handleCheckpointCompletePhase(ctx, &podMigration)
-	case lpmv1.MigrationPhasePreparingImages:
-		return r.handlePreparingImagesPhase(ctx, &podMigration)
 	case lpmv1.MigrationPhaseRestoring:
 		return r.handleRestoringPhase(ctx, &podMigration)
 	case lpmv1.MigrationPhaseSucceeded, lpmv1.MigrationPhaseFailed:
@@ -312,9 +310,9 @@ func (r *PodMigrationReconciler) handleCheckpointCompletePhase(ctx context.Conte
 	logger := log.FromContext(ctx)
 	logger.Info("Handling CheckpointComplete phase for PodMigration", "name", podMigration.Name)
 
-	// Move to preparing images phase
-	podMigration.Status.Phase = lpmv1.MigrationPhasePreparingImages
-	podMigration.Status.Message = "preparing checkpoint images"
+	// Move to restoring phase
+	podMigration.Status.Phase = lpmv1.MigrationPhaseRestoring
+	podMigration.Status.Message = "restoring from checkpoint"
 	if err := r.Status().Update(ctx, podMigration); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -396,11 +394,59 @@ func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMi
 	logger := log.FromContext(ctx)
 	logger.Info("Handling Restoring phase for PodMigration", "name", podMigration.Name, "isStatefulSet", podMigration.Spec.IsStatefulSet)
 
-	if podMigration.Spec.IsStatefulSet {
-		return r.handleStatefulSetRestoration(ctx, podMigration)
-	} else {
-		return r.handlePodRestoration(ctx, podMigration)
+	// Validate PodCheckpointRef
+	podCheckpointRef := podMigration.Status.PodCheckpointRef
+	if podCheckpointRef == nil || podCheckpointRef.Name == "" {
+		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, "missing PodCheckpointRef in status")
 	}
+
+	podCheckpointName := podCheckpointRef.Name
+	podRestoreName := podCheckpointName + "-restore"
+
+	var podRestore lpmv1.PodRestore
+	err := r.Get(ctx, client.ObjectKey{Namespace: podMigration.Namespace, Name: podRestoreName}, &podRestore)
+
+	if apierrors.IsNotFound(err) {
+		// Re-create restore request
+		podRestore = lpmv1.PodRestore{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      podRestoreName,
+				Namespace: podMigration.Namespace,
+				OwnerReferences: []metav1.OwnerReference{
+					*metav1.NewControllerRef(podMigration, lpmv1.GroupVersion.WithKind("PodMigration")),
+				},
+			},
+			Spec: lpmv1.PodRestoreSpec{
+				PodCheckpointContentRef: corev1.LocalObjectReference{Name: podCheckpointName},
+				TargetNode:              podMigration.Spec.TargetNode,
+			},
+		}
+		if err := r.Create(ctx, &podRestore); err != nil {
+			return ctrl.Result{}, err
+		}
+		logger.Info("PodRestore created", "name", podRestoreName)
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	} else if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Switch based on restore status
+	switch podRestore.Status.Phase {
+	case lpmv1.PodRestorePhaseFailed:
+		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, "restore failed: "+podRestore.Status.Message)
+
+	case lpmv1.PodRestorePhaseSucceeded:
+			podMigration.Status.Phase = lpmv1.MigrationPhaseSucceeded
+		podMigration.Status.Message = "pod successfully restored"
+			if err := r.Status().Update(ctx, podMigration); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{}, nil
+	}
+
+	// Pending / Preparing / Restoring / default
+	logger.Info("Restore in progress", "phase", podRestore.Status.Phase)
+	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 }
 
 func (r *PodMigrationReconciler) handlePodRestoration(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
