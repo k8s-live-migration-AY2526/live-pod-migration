@@ -46,11 +46,6 @@ type PodMigrationSpec struct {
 	// For StatefulSet, the original pod will be deleted regardless of this flag
 	// to enable recreation by the StatefulSet controller.
 	DeleteOriginalPod bool `json:"deleteOriginalPod,omitempty"`
-
-	// IsStatefulSet indicates whether this is a StatefulSet pod migration.
-	// When true, the migration will patch the StatefulSet template and manage
-	// pod recreation through the StatefulSet controller.
-	IsStatefulSet bool `json:"isStatefulSet,omitempty"`
 }
 
 // PodMigrationStatus defines the observed state of PodMigration.
@@ -73,6 +68,11 @@ type PodMigrationStatus struct {
 
 	// CheckpointImages maps container names to their prepared OCI checkpoint image references.
 	CheckpointImages map[string]string `json:"checkpointImages,omitempty"`
+
+	// IsStatefulSet indicates whether this is a StatefulSet pod migration.
+	// When true, the migration will patch the StatefulSet template and manage
+	// pod recreation through the StatefulSet controller.
+	IsStatefulSet bool `json:"isStatefulSet,omitempty"`
 
 	// StatefulSetRestore contains information needed to restore the original StatefulSet
 	// template after migration completion. This field is only populated for StatefulSet pods.
