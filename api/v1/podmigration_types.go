@@ -42,6 +42,11 @@ type PodMigrationSpec struct {
 	// TargetNode is the name of the node where the Pod should be restored.
 	TargetNode string `json:"targetNode"`
 
+	// DeleteOriginalPod indicates whether to delete the original Pod
+	// For StatefulSet, the original pod will be deleted regardless of this flag
+	// to enable recreation by the StatefulSet controller.
+	DeleteOriginalPod bool `json:"deleteOriginalPod,omitempty"`
+
 	// IsStatefulSet indicates whether this is a StatefulSet pod migration.
 	// When true, the migration will patch the StatefulSet template and manage
 	// pod recreation through the StatefulSet controller.

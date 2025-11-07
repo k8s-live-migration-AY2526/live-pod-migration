@@ -471,12 +471,23 @@ func (r *PodRestoreReconciler) restoreStatefulSetTemplate(ctx context.Context, p
 func (r *PodRestoreReconciler) handleCompleted(ctx context.Context, podRestore *lpmv1.PodRestore) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	if podRestore.Status.StatefulSetRestore != nil {
+	if podRestore.Spec.IsStatefulSet {
+		if podRestore.Status.StatefulSetRestore == nil {
+			logger.Info("No StatefulSet restore info stored, skipping restore")
+			return ctrl.Result{}, nil
+		}
+
 		if err := r.restoreStatefulSetTemplate(ctx, podRestore); err != nil {
 			logger.Error(err, "Failed to restore StatefulSet template", "statefulSet", podRestore.Status.StatefulSetRestore.Name)
 			// Don't fail the migration just because template restore failed
 		} else {
 			logger.Info("StatefulSet template restored successfully", "statefulSet", podRestore.Status.StatefulSetRestore.Name)
+		}
+	} else if podRestore.Spec.DeleteOriginalPod {
+		// For non-StatefulSet pods, delete original pod if requested
+		if err := r.deleteOriginalPod(ctx, podRestore); err != nil {
+			logger.Error(err, "Failed to delete original pod")
+			// Don't fail the migration just because original pod deletion failed
 		}
 	}
 
@@ -514,7 +525,11 @@ func (r *PodRestoreReconciler) createRestoredPod(podRestore *lpmv1.PodRestore, c
 	restoredPod := podSnapshot.DeepCopy()
 
 	// Change only what's absolutely necessary
-	restoredPod.ObjectMeta.Name = fmt.Sprintf("%s-restored", podSnapshot.Name)
+	restoredPodName := podRestore.Spec.RestoredPodName
+	if podRestore.Spec.RestoredPodName == "" {
+		restoredPodName = fmt.Sprintf("%s-restored", podSnapshot.Name)
+	}
+	restoredPod.ObjectMeta.Name = restoredPodName
 	restoredPod.ObjectMeta.ResourceVersion = ""            // Required for creation
 	restoredPod.ObjectMeta.UID = ""                        // Required for creation
 	restoredPod.Spec.NodeName = podRestore.Spec.TargetNode // Target node
@@ -573,6 +588,41 @@ func (r *PodRestoreReconciler) isPodUsingCheckpointImages(pod *corev1.Pod, podRe
 		}
 	}
 	return true
+}
+
+func (r *PodRestoreReconciler) deleteOriginalPod(ctx context.Context, podRestore *lpmv1.PodRestore) error {
+	logger := log.FromContext(ctx)
+
+	cpc, err := r.getPodCheckpointContent(ctx, podRestore)
+	if err != nil {
+		return fmt.Errorf("failed to get pod checkpoint content: %w", err)
+	}
+
+	originalPodName := cpc.Spec.PodName
+	if podRestore.Spec.RestoredPodName == originalPodName {
+		// Avoid deleting the restored pod if it has the same name as the original
+		logger.Info("Restored pod name matches original pod name; skipping deletion", "pod", originalPodName)
+		return nil
+	}
+
+	var originalPod corev1.Pod
+	err = r.Get(ctx, client.ObjectKey{
+		Namespace: cpc.Spec.PodNamespace,
+		Name:      originalPodName,
+	}, &originalPod)
+
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to get original pod for deletion: %w", err)
+	}
+
+	err = r.Delete(ctx, &originalPod)
+	if err != nil {
+		return fmt.Errorf("failed to delete original pod: %w", err)
+	}
+	return nil
 }
 
 // getCheckpointPathForContainer locates the artifactURI inside PodCheckpointContent for a container name

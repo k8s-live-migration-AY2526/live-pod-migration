@@ -57,6 +57,14 @@ type PodRestoreSpec struct {
 	// If empty, the scheduler will decide placement.
 	TargetNode string `json:"targetNode,omitempty"`
 
+	// RestoredPodName is the name to assign to the restored Pod.
+	RestoredPodName string `json:"restoredPodName,omitempty"`
+
+	// DeleteOriginalPod indicates whether to delete the original Pod
+	// For StatefulSet, the original pod will be deleted regardless of this flag
+	// to enable recreation by the StatefulSet controller.
+	DeleteOriginalPod bool `json:"deleteOriginalPod,omitempty"`
+
 	// IsStatefulSet indicates whether this is a StatefulSet pod restoration.
 	// When true, the migration will patch the StatefulSet template and manage
 	// pod recreation through the StatefulSet controller.
