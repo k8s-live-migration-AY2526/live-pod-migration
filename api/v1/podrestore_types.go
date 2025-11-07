@@ -32,6 +32,21 @@ const (
 	PodRestorePhaseFailed    PodRestorePhase = "Failed"
 )
 
+// StatefulSetRestoreInfo contains information needed to restore a StatefulSet's
+// original template after migration completion.
+type StatefulSetRestoreInfo struct {
+	// Name is the name of the StatefulSet being migrated.
+	Name string `json:"name"`
+
+	// OriginalTemplate stores the JSON-serialized original pod template
+	// before migration modifications.
+	OriginalTemplate string `json:"originalTemplate"`
+
+	// OriginalPodUID stores the UID of the original pod to distinguish it
+	// from the recreated pod.
+	OriginalPodUID string `json:"originalPodUID"`
+}
+
 // PodRestoreSpec defines the desired state of PodRestore.
 type PodRestoreSpec struct {
 	// PodCheckpointContentRef references the PodCheckpointContent that holds
@@ -41,6 +56,11 @@ type PodRestoreSpec struct {
 	// TargetNode optionally pins the restored Pod to a specific node.
 	// If empty, the scheduler will decide placement.
 	TargetNode string `json:"targetNode,omitempty"`
+
+	// IsStatefulSet indicates whether this is a StatefulSet pod restoration.
+	// When true, the migration will patch the StatefulSet template and manage
+	// pod recreation through the StatefulSet controller.
+	IsStatefulSet bool `json:"isStatefulSet,omitempty"`
 }
 
 // PodRestoreStatus defines the observed state of PodRestore.
@@ -62,6 +82,10 @@ type PodRestoreStatus struct {
 
 	// ImageMapping maps container name -> prepared image reference used during restore.
 	ImageMapping map[string]string `json:"imageMapping,omitempty"`
+
+	// StatefulSetRestore contains information needed to restore the original StatefulSet
+	// template after migration completion. This field is only populated for StatefulSet pods.
+	StatefulSetRestore *StatefulSetRestoreInfo `json:"statefulSetRestore,omitempty"`
 }
 
 // +kubebuilder:object:root=true

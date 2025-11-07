@@ -419,6 +419,7 @@ func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMi
 			Spec: lpmv1.PodRestoreSpec{
 				PodCheckpointContentRef: corev1.LocalObjectReference{Name: podCheckpointName},
 				TargetNode:              podMigration.Spec.TargetNode,
+				IsStatefulSet:           podMigration.Spec.IsStatefulSet,
 			},
 		}
 		if err := r.Create(ctx, &podRestore); err != nil {
