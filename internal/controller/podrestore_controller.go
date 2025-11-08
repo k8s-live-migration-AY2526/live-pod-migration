@@ -483,7 +483,7 @@ func (r *PodRestoreReconciler) handleCompleted(ctx context.Context, podRestore *
 		} else {
 			logger.Info("StatefulSet template restored successfully", "statefulSet", podRestore.Status.StatefulSetRestore.Name)
 		}
-	} else if podRestore.Spec.DeleteOriginalPod {
+	} else if !podRestore.Spec.RetainOriginalPod {
 		// For non-StatefulSet pods, delete original pod if requested
 		if err := r.deleteOriginalPod(ctx, podRestore); err != nil {
 			logger.Error(err, "Failed to delete original pod")

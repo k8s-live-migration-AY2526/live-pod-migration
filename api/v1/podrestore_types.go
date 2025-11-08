@@ -60,10 +60,13 @@ type PodRestoreSpec struct {
 	// RestoredPodName is the name to assign to the restored Pod.
 	RestoredPodName string `json:"restoredPodName,omitempty"`
 
-	// DeleteOriginalPod indicates whether to delete the original Pod
-	// For StatefulSet, the original pod will be deleted regardless of this flag
+	// RetainOriginalPod indicates whether to keep the original Pod after migration.
+	// By default, the original Pod will be deleted after successful migration.
+	// For StatefulSet pods, the original pod will be deleted regardless of this flag
 	// to enable recreation by the StatefulSet controller.
-	DeleteOriginalPod bool `json:"deleteOriginalPod,omitempty"`
+	// +optional
+	// +kubebuilder:default=false
+	RetainOriginalPod bool `json:"retainOriginalPod,omitempty"`
 
 	// IsStatefulSet indicates whether this is a StatefulSet pod restoration.
 	// When true, the migration will patch the StatefulSet template and manage

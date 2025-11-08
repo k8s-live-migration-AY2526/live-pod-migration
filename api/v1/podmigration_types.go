@@ -42,10 +42,13 @@ type PodMigrationSpec struct {
 	// TargetNode is the name of the node where the Pod should be restored.
 	TargetNode string `json:"targetNode"`
 
-	// DeleteOriginalPod indicates whether to delete the original Pod
-	// For StatefulSet, the original pod will be deleted regardless of this flag
+	// RetainOriginalPod indicates whether to keep the original Pod after migration.
+	// By default, the original Pod will be deleted after successful migration.
+	// For StatefulSet pods, the original pod will be deleted regardless of this flag
 	// to enable recreation by the StatefulSet controller.
-	DeleteOriginalPod bool `json:"deleteOriginalPod,omitempty"`
+	// +optional
+	// +kubebuilder:default=false
+	RetainOriginalPod bool `json:"retainOriginalPod,omitempty"`
 }
 
 // PodMigrationStatus defines the observed state of PodMigration.
