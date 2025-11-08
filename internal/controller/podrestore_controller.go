@@ -213,9 +213,8 @@ func (r *PodRestoreReconciler) handleRestoring(ctx context.Context, podRestore *
 
 	if podRestore.Spec.IsStatefulSet {
 		return r.handleStatefulSetRestoration(ctx, podRestore)
-	} else {
-		return r.handlePodRestoration(ctx, podRestore)
 	}
+	return r.handlePodRestoration(ctx, podRestore)
 }
 
 func (r *PodRestoreReconciler) handlePodRestoration(ctx context.Context, podRestore *lpmv1.PodRestore) (ctrl.Result, error) {
@@ -472,13 +471,8 @@ func (r *PodRestoreReconciler) handleCompleted(ctx context.Context, podRestore *
 	logger := log.FromContext(ctx)
 
 	if podRestore.Spec.IsStatefulSet {
-		if podRestore.Status.StatefulSetRestore == nil {
-			logger.Info("No StatefulSet restore info stored, skipping restore")
-			return ctrl.Result{}, nil
-		}
-
 		if err := r.restoreStatefulSetTemplate(ctx, podRestore); err != nil {
-			logger.Error(err, "Failed to restore StatefulSet template", "statefulSet", podRestore.Status.StatefulSetRestore.Name)
+			logger.Error(err, "Failed to restore StatefulSet template", "podRestore", podRestore.Name)
 			// Don't fail the migration just because template restore failed
 		} else {
 			logger.Info("StatefulSet template restored successfully", "statefulSet", podRestore.Status.StatefulSetRestore.Name)
@@ -599,7 +593,7 @@ func (r *PodRestoreReconciler) deleteOriginalPod(ctx context.Context, podRestore
 	}
 
 	originalPodName := cpc.Spec.PodName
-	if podRestore.Spec.RestoredPodName == originalPodName {
+	if podRestore.Status.RestoredPodName == originalPodName {
 		// Avoid deleting the restored pod if it has the same name as the original
 		logger.Info("Restored pod name matches original pod name; skipping deletion", "pod", originalPodName)
 		return nil

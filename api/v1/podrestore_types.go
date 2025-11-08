@@ -69,7 +69,7 @@ type PodRestoreSpec struct {
 	RetainOriginalPod bool `json:"retainOriginalPod,omitempty"`
 
 	// IsStatefulSet indicates whether this is a StatefulSet pod restoration.
-	// When true, the migration will patch the StatefulSet template and manage
+	// When true, the controller will patch the StatefulSet template and manage
 	// pod recreation through the StatefulSet controller.
 	IsStatefulSet bool `json:"isStatefulSet,omitempty"`
 }

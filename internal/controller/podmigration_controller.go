@@ -334,7 +334,15 @@ func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMi
 	err := r.Get(ctx, client.ObjectKey{Namespace: podMigration.Namespace, Name: podRestoreName}, &podRestore)
 
 	if apierrors.IsNotFound(err) {
-		// Re-create restore request
+		var podCheckpoint lpmv1.PodCheckpoint
+		if err := r.Get(ctx, client.ObjectKey{Namespace: podMigration.Namespace, Name: podCheckpointName}, &podCheckpoint); err != nil {
+			return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, fmt.Sprintf("failed to get PodCheckpoint %s: %v", podCheckpointName, err))
+		}
+		if podCheckpoint.Status.BoundContentName == "" {
+			return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, "PodCheckpointContent has no bound content")
+		}
+
+		// Create restore request
 		podRestore = lpmv1.PodRestore{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      podRestoreName,
@@ -344,7 +352,7 @@ func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMi
 				},
 			},
 			Spec: lpmv1.PodRestoreSpec{
-				PodCheckpointContentRef: corev1.LocalObjectReference{Name: podCheckpointName},
+				PodCheckpointContentRef: corev1.LocalObjectReference{Name: podCheckpoint.Status.BoundContentName},
 				TargetNode:              podMigration.Spec.TargetNode,
 				RetainOriginalPod:       podMigration.Spec.RetainOriginalPod,
 				IsStatefulSet:           podMigration.Status.IsStatefulSet,
