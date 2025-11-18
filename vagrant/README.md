@@ -119,3 +119,40 @@ vagrant destroy -f
 ```
 
 This setup provides a clean, minimal Kubernetes environment perfect for testing the live pod migration system without the complexity of custom builds.
+
+```bash
+# To build kubelet (outside VM)
+cd kubernetes
+build/run.sh make
+scp _output/dockerized/bin/linux/arm64/kubelet vagrant@{ip}:~/
+
+# To build crio (in VM)
+cd cri-o
+go mod edit -replace=k8s.io/cri-api=/home/vagrant/live-pod-migration-controller/kubernetes/staging/src/k8s.io/cri-api
+go mod tidy
+go mod vendor
+PATH=/home/vagrant/.go/bin:$PATH make # Override the go path to use 1.22.2
+
+# To deploy crio and kubelet
+sudo systemctl stop crio
+sudo systemctl stop kubelet
+
+sudo mv /usr/bin/crio /usr/bin/crio.old
+sudo mv /usr/bin/kubelet /usr/bin/kubelet.old
+
+sudo cp ~/crio /usr/bin/crio
+sudo cp ~/kubelet /usr/bin/kubelet
+sudo chmod +x /usr/bin/crio
+sudo chmod +x /usr/bin/kubelet
+
+sudo systemctl daemon-reload
+sudo systemctl start crio
+sudo systemctl start kubelet
+
+# Check service status
+sudo systemctl status crio
+sudo systemctl status kubelet
+
+# Watch live logs for any startup errors
+sudo journalctl -u kubelet -f
+```
