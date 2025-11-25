@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-pvc-migration-test
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: nfs-csi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: writer-pod
+spec:
+  nodeName: k8s-worker
+  containers:
+  - name: writer
+    image: busybox:1.35
+    command: 
+    - /bin/sh
+    - -c  
+    - |
+      echo 'Script starting on host: $(hostname)'
+      
+      # 1. OPEN FILE on File Descriptor 3 (Directly on the NFS mount)
+      # Append mode ensures we don't overwrite existing data from previous runs
+      exec 3>>/data/migration.log
+      
+      # 2. ACQUIRE NFS LOCK
+      # This sends a request to the NFS server to lock this specific file.
+      echo "Attempting to acquire lock..."
+      flock -x 3
+      echo "LOCK ACQUIRED on NFS. Starting write loop..."
+
+      COUNT=0
+      while true; do
+        COUNT=$((COUNT + 1))
+        TIMESTAMP=$(date)
+        
+        # 3. WRITE to FD 3
+        echo "$TIMESTAMP | Host: $(hostname) | Count=$COUNT" >&3
+        
+        sleep 3
+      done
+    volumeMounts:
+    - mountPath: /data
+      name: nfs-volume
+  volumes:
+  - name: nfs-volume
+    persistentVolumeClaim:
+      claimName: nfs-pvc-migration-test
