@@ -72,7 +72,7 @@ type PodMigrationStatus struct {
 	// CheckpointImages maps container names to their prepared OCI checkpoint image references.
 	CheckpointImages map[string]string `json:"checkpointImages,omitempty"`
 
-	// IsStatefulSet indiciates whether this migration involves a StatefulSet pod.
+	// IsStatefulSet indicates whether this migration involves a StatefulSet pod.
 	// This field is automatically set by the controller when it detects that
 	// the source pod is owned by a StatefulSet controller.
 	IsStatefulSet bool `json:"isStatefulSet,omitempty"`

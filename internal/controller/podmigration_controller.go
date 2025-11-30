@@ -354,7 +354,6 @@ func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMi
 			Spec: lpmv1.PodRestoreSpec{
 				PodCheckpointContentRef: corev1.LocalObjectReference{Name: podCheckpoint.Status.BoundContentName},
 				TargetNode:              podMigration.Spec.TargetNode,
-				RetainOriginalPod:       podMigration.Spec.RetainOriginalPod,
 				IsStatefulSet:           podMigration.Status.IsStatefulSet,
 			},
 		}
@@ -387,8 +386,33 @@ func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMi
 }
 
 func (r *PodMigrationReconciler) handleCompletedOrFailedPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
-	// No further action needed for completed migrations
+	logger := log.FromContext(ctx)
+
+	// Do not cleanup pods belonging to StatefulSets.
+	// Deletion behaviour is built into StatefulSet migration flow within PodRestore controller.
+	if !podMigration.Status.IsStatefulSet && !podMigration.Spec.RetainOriginalPod {
+		if err := r.deleteOriginalPod(ctx, podMigration); err != nil {
+			return ctrl.Result{}, err
+		}
+		logger.Info("Original pod deleted after migration", "pod", podMigration.Spec.PodName)
+	}
+
 	return ctrl.Result{}, nil
+}
+
+func (r *PodMigrationReconciler) deleteOriginalPod(ctx context.Context, podMigration *lpmv1.PodMigration) error {
+	var originalPod corev1.Pod
+	err := r.Get(ctx, client.ObjectKey{Namespace: podMigration.Namespace, Name: podMigration.Spec.PodName}, &originalPod)
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			return fmt.Errorf("failed to get original pod for deletion: %w", err)
+		}
+		return nil
+	}
+	if err := r.Delete(ctx, &originalPod); err != nil {
+		return fmt.Errorf("failed to delete original pod: %w", err)
+	}
+	return nil
 }
 
 func (r *PodMigrationReconciler) updatePhase(ctx context.Context, podMigration *lpmv1.PodMigration, phase lpmv1.PodMigrationPhase, message string) error {
