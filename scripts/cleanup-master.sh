@@ -22,7 +22,6 @@ echo
 echo "=== Deleting controller deployment and agents ==="
 kubectl delete -n live-pod-migration-controller-system deployment lpm-controller-manager --ignore-not-found=true
 kubectl delete -n live-pod-migration-controller-system daemonset lpm-live-pod-migration-controller-checkpoint-agent --ignore-not-found=true
-kubectl delete -n live-pod-migration-controller-system daemonset live-pod-migration-controller-live-pod-migration-controller-checkpoint-agent --ignore-not-found=true
 echo
 
 echo "=== Deleting namespace ==="
