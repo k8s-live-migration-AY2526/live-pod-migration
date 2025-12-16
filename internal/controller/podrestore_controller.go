@@ -517,20 +517,22 @@ func (r *PodRestoreReconciler) createRestoredPod(podRestore *lpmv1.PodRestore, c
 	if podRestore.Spec.RestoredPodName == "" {
 		restoredPodName = fmt.Sprintf("%s-restored", podSnapshot.Name)
 	}
-	restoredPod.ObjectMeta.Name = restoredPodName
-	restoredPod.ObjectMeta.ResourceVersion = ""            // Required for creation
-	restoredPod.ObjectMeta.UID = ""                        // Required for creation
+	restoredPod.Name = restoredPodName
+	restoredPod.ResourceVersion = ""                       // Required for creation
+	restoredPod.UID = ""                                   // Required for creation
 	restoredPod.Spec.NodeName = podRestore.Spec.TargetNode // Target node
 
 	// Add migration tracking annotations
-	if restoredPod.ObjectMeta.Annotations == nil {
-		restoredPod.ObjectMeta.Annotations = make(map[string]string)
+	if restoredPod.Annotations == nil {
+		restoredPod.Annotations = make(map[string]string)
 	}
-	restoredPod.ObjectMeta.Annotations["migration.source-pod"] = podSnapshot.Name
-	restoredPod.ObjectMeta.Annotations["migration.target-node"] = podRestore.Spec.TargetNode
+	restoredPod.Annotations["migration.source-pod"] = podSnapshot.Name
+	restoredPod.Annotations["migration.target-node"] = podRestore.Spec.TargetNode
+	// Remove freeze-restart if present
+	delete(restoredPod.Annotations, "migration.my.domain/freeze-restart")
 
 	// Set owner reference
-	restoredPod.ObjectMeta.OwnerReferences = []metav1.OwnerReference{
+	restoredPod.OwnerReferences = []metav1.OwnerReference{
 		*metav1.NewControllerRef(podRestore, lpmv1.GroupVersion.WithKind("PodRestore")),
 	}
 
