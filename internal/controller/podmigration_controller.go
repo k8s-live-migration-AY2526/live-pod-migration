@@ -430,8 +430,7 @@ func (r *PodMigrationReconciler) handleFailedPhase(ctx context.Context, podMigra
 		}
 	}
 
-	// Proceed to handle completed phase after error handling
-	return r.handleCompletedPhase(ctx, podMigration)
+	return ctrl.Result{}, nil
 }
 
 func (r *PodMigrationReconciler) handleCompletedPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
