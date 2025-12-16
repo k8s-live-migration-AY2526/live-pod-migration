@@ -86,8 +86,10 @@ func (r *PodMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.handleCheckpointCompletePhase(ctx, &podMigration)
 	case lpmv1.MigrationPhaseRestoring:
 		return r.handleRestoringPhase(ctx, &podMigration)
-	case lpmv1.MigrationPhaseSucceeded, lpmv1.MigrationPhaseFailed:
-		return r.handleCompletedOrFailedPhase(ctx, &podMigration)
+	case lpmv1.MigrationPhaseFailed:
+		return r.handleFailedPhase(ctx, &podMigration)
+	case lpmv1.MigrationPhaseSucceeded:
+		return r.handleCompletedPhase(ctx, &podMigration)
 	default:
 		logger.Info("Unknown phase, nothing to do", "phase", podMigration.Status.Phase)
 		return ctrl.Result{}, nil
@@ -179,6 +181,28 @@ func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigr
 		}
 	}
 
+	// Add annotation to freeze restart if deferTermination is not set
+	if !podMigration.Spec.DeferTermination {
+		if srcPod.Annotations == nil || srcPod.Annotations["migration.my.domain/freeze-restart"] != "true" {
+			patch := client.MergeFrom(srcPod.DeepCopy())
+
+			if srcPod.Annotations == nil {
+				srcPod.Annotations = make(map[string]string)
+			}
+			srcPod.Annotations["migration.my.domain/freeze-restart"] = "true"
+
+			if err := r.Patch(ctx, &srcPod, patch); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to apply freeze annotation: %w", err)
+			}
+
+			logger.Info("Applied freeze-restart annotation to source pod", "pod", srcPod.Name)
+
+			// Requeue to give the Kubelet time to see the annotation
+			// If you proceed to checkpoint immediately, the Kubelet might not have synced this update yet.
+			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+		}
+	}
+
 	// 3. If target node requested, validate it exists
 	if podMigration.Spec.TargetNode != "" {
 		var node corev1.Node
@@ -206,7 +230,8 @@ func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigr
 				},
 			},
 			Spec: lpmv1.PodCheckpointSpec{
-				PodName: &podMigration.Spec.PodName,
+				PodName:          &podMigration.Spec.PodName,
+				DeferTermination: podMigration.Spec.DeferTermination,
 			},
 		}
 		if err := r.Create(ctx, &podCheckpoint); err != nil {
@@ -262,7 +287,8 @@ func (r *PodMigrationReconciler) handleCheckpointingPhase(ctx context.Context, p
 				},
 			},
 			Spec: lpmv1.PodCheckpointSpec{
-				PodName: &podMigration.Spec.PodName,
+				PodName:          &podMigration.Spec.PodName,
+				DeferTermination: podMigration.Spec.DeferTermination,
 			},
 		}
 		if err := r.Create(ctx, &podCheckpoint); err != nil {
@@ -385,7 +411,29 @@ func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMi
 	return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 }
 
-func (r *PodMigrationReconciler) handleCompletedOrFailedPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
+func (r *PodMigrationReconciler) handleFailedPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
+	originalPod, err := r.getOriginalPod(ctx, podMigration)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get original pod in Failed Phase: %w", err)
+	}
+
+	// Remove freezeRestart annotation if present to try and recover from failure
+	if originalPod.Annotations != nil {
+		if _, exists := originalPod.Annotations["migration.my.domain/freeze-restart"]; exists {
+			patchBase := client.MergeFrom(originalPod.DeepCopy())
+			delete(originalPod.Annotations, "migration.my.domain/freeze-restart")
+			if err := r.Patch(ctx, originalPod, patchBase); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to remove freeze annotation: %w", err)
+			}
+
+			log.FromContext(ctx).Info("Removed freeze annotation from source pod during failure recovery", "pod", originalPod.Name)
+		}
+	}
+
+	return ctrl.Result{}, nil
+}
+
+func (r *PodMigrationReconciler) handleCompletedPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	// Do not cleanup pods belonging to StatefulSets.

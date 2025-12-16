@@ -3,6 +3,7 @@ kind: Pod
 metadata:
   name: counter-migration-test
 spec:
+  restartPolicy: Never
   nodeName: k8s-worker
   containers:
   - name: counter

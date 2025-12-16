@@ -32,6 +32,9 @@ const (
 // PodCheckpointSpec defines the desired state of PodCheckpoint.
 type PodCheckpointSpec struct {
 	PodName *string `json:"podName"`
+
+	// When set to true, will defer termination to after restored
+	DeferTermination bool `json:"deferTermination,omitempty"`
 }
 
 // PodCheckpointStatus defines the observed state of PodCheckpoint.

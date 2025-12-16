@@ -166,7 +166,7 @@
             cd $HOME/live-pod-migration-controller
             rm -f bin/controller-gen*
 
-            go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.17.0
+            go install sigs.k8s.io/controller-tools/cmd/controller-gen@v0.18.0
             go install sigs.k8s.io/kustomize/kustomize/v5@latest
       become_user: "{{ vagrant_user }}"
 

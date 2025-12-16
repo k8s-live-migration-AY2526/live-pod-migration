@@ -26,14 +26,13 @@ spec:
       echo 'Script starting on host: $(hostname)'
       
       # 1. OPEN FILE on File Descriptor 3 (Directly on the NFS mount)
-      # Append mode ensures we don't overwrite existing data from previous runs
-      exec 3>>/data/migration.log
+      exec 3>/data/migration.log
       
       # 2. ACQUIRE NFS LOCK
       # This sends a request to the NFS server to lock this specific file.
-      echo "Attempting to acquire lock..."
-      flock -x 3
-      echo "LOCK ACQUIRED on NFS. Starting write loop..."
+      # echo "Attempting to acquire lock..."
+      # flock -x 3
+      # echo "LOCK ACQUIRED on NFS. Starting write loop..."
 
       COUNT=0
       while true; do
@@ -43,7 +42,7 @@ spec:
         # 3. WRITE to FD 3
         echo "$TIMESTAMP | Host: $(hostname) | Count=$COUNT" >&3
         
-        sleep 3
+        sleep 1
       done
     volumeMounts:
     - mountPath: /data

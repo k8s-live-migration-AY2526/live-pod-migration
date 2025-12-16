@@ -6,15 +6,20 @@ This directory contains a simplified Vagrant setup suitable for testing the live
 
 - [Vagrant](https://www.vagrantup.com/downloads) installed
 - [VirtualBox](https://www.virtualbox.org/wiki/Downloads) or [Parallels](https://www.parallels.com/) installed
-- Optional: At least 8GB RAM available for VMs, if you don't have that much free RAM, vagrant can still run, although you might experience some performance issues
+- Optional: At least 10GB RAM available for VMs, if you don't have that much free RAM, vagrant can still run, although you might experience some performance issues
 
 ## Cluster Architecture
 
 - **Master Node** (`k8s-master`): 4GB RAM, 2 CPUs, IP: 192.168.56.10
-- **Worker Node** (`k8s-worker`): 2GB RAM, 2 CPUs, IP: 192.168.56.11
-- **Worker2 Node** (`k8s-worker2`): 2GB RAM, 2 CPUs, IP: 192.168.56.12
+- **Worker Node** (`k8s-worker`): 3GB RAM, 2 CPUs, IP: 192.168.56.11
+- **Worker2 Node** (`k8s-worker2`): 3GB RAM, 2 CPUs, IP: 192.168.56.12
 
 ## Quick Start
+
+### 0. Ensure you have updated submodules
+```bash
+git submodule update --init --recursive
+```
 
 ### 1. Start the Cluster
 
@@ -119,3 +124,48 @@ vagrant destroy -f
 ```
 
 This setup provides a clean, minimal Kubernetes environment perfect for testing the live pod migration system without the complexity of custom builds.
+
+## Building and Deploying Kubelet and CRIO
+```bash
+sudo apt install -y libgpgme-dev # Required for building
+
+# To build kubelet (in VM)
+cd kubernetes
+make all WHAT=cmd/kubelet
+mv _output/bin/kubelet ~
+scp ~/kubelet vagrant@192.168.56.11:~/ # copy binary to worker and worker
+scp ~/kubelet vagrant@192.168.56.12:~/ # copy binary to worker and worker2
+
+# To build crio (in VM)
+cd cri-o
+go mod edit -replace=k8s.io/cri-api=/home/vagrant/live-pod-migration-controller/kubernetes/staging/src/k8s.io/cri-api
+go mod tidy
+go mod vendor
+PATH=/home/vagrant/.go/bin:$PATH make # Override the go path to use 1.22.2
+mv bin/crio ~
+scp ~/crio vagrant@192.168.56.11:~/ # copy binary to worker and worker
+scp ~/crio vagrant@192.168.56.12:~/ # copy binary to worker and worker2
+
+# To deploy crio and kubelet
+sudo systemctl stop crio
+sudo systemctl stop kubelet
+
+sudo mv /usr/bin/crio /usr/bin/crio.old
+sudo mv /usr/bin/kubelet /usr/bin/kubelet.old
+
+sudo cp ~/crio /usr/bin/crio
+sudo cp ~/kubelet /usr/bin/kubelet
+sudo chmod +x /usr/bin/crio
+sudo chmod +x /usr/bin/kubelet
+
+sudo systemctl daemon-reload
+sudo systemctl start crio
+sudo systemctl start kubelet
+
+# Check service status
+sudo systemctl status crio
+sudo systemctl status kubelet
+
+# Watch live logs for any startup errors
+sudo journalctl -u kubelet -f
+```

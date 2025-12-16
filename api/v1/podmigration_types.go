@@ -42,6 +42,9 @@ type PodMigrationSpec struct {
 	// TargetNode is the name of the node where the Pod should be restored.
 	TargetNode string `json:"targetNode"`
 
+	// When set to true, will defer termination to after restored
+	DeferTermination bool `json:"deferTermination,omitempty"`
+
 	// RetainOriginalPod indicates whether to keep the original Pod after migration.
 	// By default, the original Pod will be deleted after successful migration.
 	// For StatefulSet pods, the original pod will be deleted regardless of this flag

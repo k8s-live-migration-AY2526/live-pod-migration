@@ -64,8 +64,8 @@ func NewCheckpointServer() *CheckpointServer {
 
 // Checkpoint implements the checkpoint operation
 func (s *CheckpointServer) Checkpoint(ctx context.Context, req *pb.CheckpointRequest) (*pb.CheckpointResponse, error) {
-	log.Printf("Checkpoint request: namespace=%s, pod=%s, container=%s, uid=%s",
-		req.PodNamespace, req.PodName, req.ContainerName, req.PodUid)
+	log.Printf("Checkpoint request: namespace=%s, pod=%s, container=%s, uid=%s deferTermination=%t",
+		req.PodNamespace, req.PodName, req.ContainerName, req.PodUid, req.DeferTermination)
 
 	// Ensure checkpoint directory exists
 	if err := os.MkdirAll(checkpointDir, 0755); err != nil {
@@ -77,8 +77,8 @@ func (s *CheckpointServer) Checkpoint(ctx context.Context, req *pb.CheckpointReq
 	}
 
 	// Create checkpoint using kubelet API
-	url := fmt.Sprintf("https://%s:10250/checkpoint/%s/%s/%s",
-		s.nodeName, req.PodNamespace, req.PodName, req.ContainerName)
+	url := fmt.Sprintf("https://%s:10250/checkpoint/%s/%s/%s?leaveStopped=%t",
+		s.nodeName, req.PodNamespace, req.PodName, req.ContainerName, !req.DeferTermination)
 
 	httpClient, err := s.makeTLSClient()
 	if err != nil {

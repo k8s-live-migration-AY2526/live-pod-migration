@@ -283,6 +283,48 @@ func (r *PodRestoreReconciler) handlePodRestoration(ctx context.Context, podRest
 	case corev1.PodFailed:
 		return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, "restored pod failed to start")
 	case corev1.PodPending:
+		// 1. Check for Container Errors (ImagePullBackOff, etc.)
+		for _, status := range append(restored.Status.InitContainerStatuses, restored.Status.ContainerStatuses...) {
+			if status.State.Waiting != nil {
+				reason := status.State.Waiting.Reason
+				message := status.State.Waiting.Message
+
+				// List of fatal waiting states,
+				// not the cleanest way to detect error but seems like there isn't a better way
+				if reason == "ImagePullBackOff" ||
+					reason == "ErrImagePull" ||
+					reason == "CreateContainerError" ||
+					reason == "RunContainerError" ||
+					reason == "InvalidImageName" {
+
+					errMsg := fmt.Sprintf("Restored pod stuck in %s: %s", reason, message)
+					logger.Error(nil, errMsg, "pod", restored.Name)
+					return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, errMsg)
+				}
+			}
+		}
+
+		// 2. Check for Scheduling Errors
+		for _, cond := range restored.Status.Conditions {
+			if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse {
+				if cond.Reason == "Unschedulable" {
+					errMsg := fmt.Sprintf("Restored pod cannot be scheduled: %s", cond.Message)
+					logger.Error(nil, errMsg, "pod", restored.Name)
+					return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, errMsg)
+				}
+			}
+		}
+
+		// 3. Hard Timeout Safety Net (e.g., 5 minutes)
+		// This catches edge cases not covered above (e.g., pending PVC binding)
+		if time.Since(restored.CreationTimestamp.Time) > 5*time.Minute {
+			errMsg := "Restored pod timed out in Pending state ( > 5m)"
+			logger.Error(nil, errMsg, "pod", restored.Name)
+			return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, errMsg)
+		}
+
+		// If no fatal errors found, keep waiting
+		logger.Info("Restored pod is pending", "pod", restored.Name, "status", restored.Status)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	default:
 		// still starting
@@ -517,20 +559,22 @@ func (r *PodRestoreReconciler) createRestoredPod(podRestore *lpmv1.PodRestore, c
 	if podRestore.Spec.RestoredPodName == "" {
 		restoredPodName = fmt.Sprintf("%s-restored", podSnapshot.Name)
 	}
-	restoredPod.ObjectMeta.Name = restoredPodName
-	restoredPod.ObjectMeta.ResourceVersion = ""            // Required for creation
-	restoredPod.ObjectMeta.UID = ""                        // Required for creation
+	restoredPod.Name = restoredPodName
+	restoredPod.ResourceVersion = ""                       // Required for creation
+	restoredPod.UID = ""                                   // Required for creation
 	restoredPod.Spec.NodeName = podRestore.Spec.TargetNode // Target node
 
 	// Add migration tracking annotations
-	if restoredPod.ObjectMeta.Annotations == nil {
-		restoredPod.ObjectMeta.Annotations = make(map[string]string)
+	if restoredPod.Annotations == nil {
+		restoredPod.Annotations = make(map[string]string)
 	}
-	restoredPod.ObjectMeta.Annotations["migration.source-pod"] = podSnapshot.Name
-	restoredPod.ObjectMeta.Annotations["migration.target-node"] = podRestore.Spec.TargetNode
+	restoredPod.Annotations["migration.source-pod"] = podSnapshot.Name
+	restoredPod.Annotations["migration.target-node"] = podRestore.Spec.TargetNode
+	// Remove freeze-restart if present
+	delete(restoredPod.Annotations, "migration.my.domain/freeze-restart")
 
 	// Set owner reference
-	restoredPod.ObjectMeta.OwnerReferences = []metav1.OwnerReference{
+	restoredPod.OwnerReferences = []metav1.OwnerReference{
 		*metav1.NewControllerRef(podRestore, lpmv1.GroupVersion.WithKind("PodRestore")),
 	}
 
