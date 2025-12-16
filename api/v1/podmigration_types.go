@@ -34,21 +34,6 @@ const (
 	MigrationPhaseFailed             PodMigrationPhase = "Failed"
 )
 
-// StatefulSetRestoreInfo contains information needed to restore a StatefulSet's
-// original template after migration completion.
-type StatefulSetRestoreInfo struct {
-	// Name is the name of the StatefulSet being migrated.
-	Name string `json:"name"`
-
-	// OriginalTemplate stores the JSON-serialized original pod template
-	// before migration modifications.
-	OriginalTemplate string `json:"originalTemplate"`
-
-	// OriginalPodUID stores the UID of the original pod to distinguish it
-	// from the recreated pod.
-	OriginalPodUID string `json:"originalPodUID"`
-}
-
 // PodMigrationSpec defines the desired state of PodMigration.
 type PodMigrationSpec struct {
 	// Name of the Pod to migrate (required).
@@ -57,13 +42,15 @@ type PodMigrationSpec struct {
 	// TargetNode is the name of the node where the Pod should be restored.
 	TargetNode string `json:"targetNode"`
 
-	// IsStatefulSet indicates whether this is a StatefulSet pod migration.
-	// When true, the migration will patch the StatefulSet template and manage
-	// pod recreation through the StatefulSet controller.
-	IsStatefulSet bool `json:"isStatefulSet,omitempty"`
-
 	// When set to true, will defer termination to after restored
 	DeferTermination bool `json:"deferTermination,omitempty"`
+	// RetainOriginalPod indicates whether to keep the original Pod after migration.
+	// By default, the original Pod will be deleted after successful migration.
+	// For StatefulSet pods, the original pod will be deleted regardless of this flag
+	// to enable recreation by the StatefulSet controller.
+	// +optional
+	// +kubebuilder:default=false
+	RetainOriginalPod bool `json:"retainOriginalPod,omitempty"`
 }
 
 // PodMigrationStatus defines the observed state of PodMigration.
@@ -87,9 +74,10 @@ type PodMigrationStatus struct {
 	// CheckpointImages maps container names to their prepared OCI checkpoint image references.
 	CheckpointImages map[string]string `json:"checkpointImages,omitempty"`
 
-	// StatefulSetRestore contains information needed to restore the original StatefulSet
-	// template after migration completion. This field is only populated for StatefulSet pods.
-	StatefulSetRestore *StatefulSetRestoreInfo `json:"statefulSetRestore,omitempty"`
+	// IsStatefulSet indicates whether this migration involves a StatefulSet pod.
+	// This field is automatically set by the controller when it detects that
+	// the source pod is owned by a StatefulSet controller.
+	IsStatefulSet bool `json:"isStatefulSet,omitempty"`
 }
 
 // +kubebuilder:object:root=true
