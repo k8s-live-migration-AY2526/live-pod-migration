@@ -1,4 +1,4 @@
-- name: Kubernetes Node Setup with CRI-O and Tools
+- name: Kubernetes Node Setup with Custom CRI-O/Kubelet
   hosts: all
   become: true
   vars:
@@ -7,6 +7,7 @@
     go_version_runc: "1.22.2"
     go_version_controller: "1.21.5"
     vagrant_user: "vagrant"
+    project_root: "/home/vagrant/live-pod-migration-controller"
 
   tasks:
     - name: Update and install prereqs
@@ -55,7 +56,7 @@
           command: sysctl --system
           changed_when: false
 
-    - name: Install and configure CRI-O
+    - name: Install and configure CRI-O (Base)
       block:
         - name: Ensure directories exist
           file:
@@ -128,7 +129,7 @@
             enabled: yes
             state: restarted
 
-    - name: Install Kubernetes components
+    - name: Install Kubernetes components (Base)
       block:
         - name: Ensure apt keyrings directory exists
           file:
@@ -179,6 +180,7 @@
               - pkg-config
               - runc
               - podman
+              - libgpgme-dev  # Required for building Kubelet and CRI-O
 
         - name: Ensure apt keyrings directory exists
           file:
@@ -368,3 +370,121 @@
               alias sprm='sudo podman rmi'
             create: yes
           become_user: "{{ vagrant_user }}"
+
+    # ==========================================
+    # CUSTOM KUBELET BUILD & DEPLOY
+    # ==========================================
+    - name: Build and Deploy Custom Kubelet
+      tags: ['build-kubelet']
+      block:
+        - name: Ensure Source Code Exists
+          stat:
+            path: "{{ project_root }}/kubernetes"
+          register: k8s_src
+
+        - name: Fail if source code is missing
+          fail:
+            msg: "Kubernetes source code not found at {{ project_root }}. Please ensure source is synced/mounted."
+          when: not k8s_src.stat.exists
+
+        - name: Ensure Vagrant owns the source code
+          file:
+            path: "{{ project_root }}"
+            owner: "{{ vagrant_user }}"
+            group: "{{ vagrant_user }}"
+            recurse: yes
+            mode: 'u+rwX,g+rwX,o+rX'
+
+        - name: Build Custom Kubelet
+          shell: |
+            make all WHAT=cmd/kubelet KUBE_GIT_VERSION=v1.30.14
+          args:
+            chdir: "{{ project_root }}/kubernetes"
+          become: true
+          become_user: "{{ vagrant_user }}"
+
+        - name: Verify Kubelet Binary Exists
+          stat:
+            path: "{{ project_root }}/kubernetes/_output/local/go/bin/kubelet"
+          register: kubelet_bin
+
+        - name: Fail if Kubelet binary is missing
+          fail:
+            msg: "Build passed but binary not found at {{ project_root }}/kubernetes/_output/local/go/bin/kubelet"
+          when: not kubelet_bin.stat.exists
+
+        - name: Stop Kubelet Service
+          systemd:
+            name: kubelet
+            state: stopped
+
+        - name: Backup existing Kubelet
+          copy:
+            src: "/usr/bin/kubelet"
+            dest: "/usr/bin/kubelet.old"
+            remote_src: yes
+            mode: preserve
+          ignore_errors: true
+
+        - name: Deploy Custom Kubelet Binary
+          copy:
+            src: "{{ project_root }}/kubernetes/_output/local/go/bin/kubelet"
+            dest: "/usr/bin/kubelet"
+            remote_src: yes
+            mode: '0755'
+
+        - name: Start Kubelet Service
+          systemd:
+            daemon_reload: yes
+            name: kubelet
+            state: restarted
+            enabled: yes
+
+    # ==========================================
+    # CRI-O BUILD & DEPLOY
+    # ==========================================
+    - name: Build and Deploy CRI-O
+      tags: ['build-crio']
+      block:
+        - name: Ensure Source Code Exists
+          stat:
+            path: "{{ project_root }}/cri-o"
+          register: crio_src
+
+        - name: Fail if source code is missing
+          fail:
+            msg: "CRIO source code not found at {{ project_root }}. Please ensure source is synced/mounted."
+          when: not crio_src.stat.exists
+
+        - name: Build Custom CRI-O
+          shell: |
+            PATH=/home/{{ vagrant_user }}/.go/bin:$PATH make
+          args:
+            chdir: "{{ project_root }}/cri-o"
+
+        - name: Stop CRI-O
+          systemd:
+            name: crio
+            state: stopped
+
+        - name: Backup existing CRI-O
+          copy:
+            src: "/usr/bin/crio"
+            dest: "/usr/bin/crio.old"
+            remote_src: yes
+            mode: preserve
+          ignore_errors: true
+
+        - name: Deploy Custom CRI-O
+          copy:
+            src: "{{ project_root }}/cri-o/bin/crio"
+            dest: "/usr/bin/crio"
+            remote_src: yes
+            mode: '0755'
+
+        - name: Start CRI-O
+          systemd:
+            daemon_reload: yes
+            name: crio
+            state: restarted
+            enabled: yes

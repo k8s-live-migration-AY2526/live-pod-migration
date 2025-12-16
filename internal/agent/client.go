@@ -30,7 +30,7 @@ func NewClient(k8sClient client.Client) *Client {
 }
 
 // CheckpointContainer performs a checkpoint operation on a container
-func (c *Client) CheckpointContainer(ctx context.Context, nodeName, podNamespace, podName, containerName, podUID string) (string, error) {
+func (c *Client) CheckpointContainer(ctx context.Context, nodeName, podNamespace, podName, containerName, podUID string, deferTermination bool) (string, error) {
 	// Create gRPC connection to agent
 	conn, err := c.dialAgent(ctx, nodeName)
 	if err != nil {
@@ -47,10 +47,11 @@ func (c *Client) CheckpointContainer(ctx context.Context, nodeName, podNamespace
 
 	// Perform checkpoint
 	req := &pb.CheckpointRequest{
-		PodNamespace:  podNamespace,
-		PodName:       podName,
-		ContainerName: containerName,
-		PodUid:        podUID,
+		PodNamespace:     podNamespace,
+		PodName:          podName,
+		ContainerName:    containerName,
+		PodUid:           podUID,
+		DeferTermination: deferTermination,
 	}
 
 	resp, err := checkpointClient.Checkpoint(ctx, req)
@@ -99,7 +100,6 @@ func (c *Client) ConvertCheckpointToImage(ctx context.Context, nodeName, checkpo
 
 	return resp.ImageReference, nil
 }
-
 
 // getNodeEndpoint gets the agent endpoint using node IP
 func (c *Client) getNodeEndpoint(ctx context.Context, nodeName string) (string, error) {

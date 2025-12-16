@@ -36,6 +36,8 @@ const (
 type ContainerCheckpointSpec struct {
 	PodName       string `json:"podName"`
 	ContainerName string `json:"containerName"`
+	// When set to true, will defer termination to after restored
+	DeferTermination bool `json:"deferTermination,omitempty"`
 }
 
 // ContainerCheckpointStatus defines the observed state of ContainerCheckpoint.

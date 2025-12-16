@@ -61,6 +61,9 @@ type PodMigrationSpec struct {
 	// When true, the migration will patch the StatefulSet template and manage
 	// pod recreation through the StatefulSet controller.
 	IsStatefulSet bool `json:"isStatefulSet,omitempty"`
+
+	// When set to true, will defer termination to after restored
+	DeferTermination bool `json:"deferTermination,omitempty"`
 }
 
 // PodMigrationStatus defines the observed state of PodMigration.

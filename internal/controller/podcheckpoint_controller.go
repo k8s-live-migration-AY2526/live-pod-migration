@@ -112,8 +112,9 @@ func (r *PodCheckpointReconciler) handlePendingPhase(ctx context.Context, podChe
 					},
 				},
 				Spec: lpmv1.ContainerCheckpointSpec{
-					PodName:       *podCheckpoint.Spec.PodName,
-					ContainerName: container.Name,
+					PodName:          *podCheckpoint.Spec.PodName,
+					ContainerName:    container.Name,
+					DeferTermination: podCheckpoint.Spec.DeferTermination,
 				},
 			}
 			if err := r.Create(ctx, &containerCheckpoint); err != nil {

@@ -91,8 +91,10 @@ func (r *PodMigrationReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		return r.handlePreparingImagesPhase(ctx, &podMigration)
 	case lpmv1.MigrationPhaseRestoring:
 		return r.handleRestoringPhase(ctx, &podMigration)
-	case lpmv1.MigrationPhaseSucceeded, lpmv1.MigrationPhaseFailed:
-		return r.handleCompletedOrFailedPhase(ctx, &podMigration)
+	case lpmv1.MigrationPhaseFailed:
+		return r.handleFailedPhase(ctx, &podMigration)
+	case lpmv1.MigrationPhaseSucceeded:
+		return r.handleCompletedPhase(ctx, &podMigration)
 	default:
 		logger.Info("Unknown phase, nothing to do", "phase", podMigration.Status.Phase)
 		return ctrl.Result{}, nil
@@ -184,6 +186,28 @@ func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigr
 		}
 	}
 
+	// Add annotation to freeze restart if deferTermination is not set
+	if !podMigration.Spec.DeferTermination {
+		if srcPod.Annotations == nil || srcPod.Annotations["migration.my.domain/freeze-restart"] != "true" {
+			patch := client.MergeFrom(srcPod.DeepCopy())
+
+			if srcPod.Annotations == nil {
+				srcPod.Annotations = make(map[string]string)
+			}
+			srcPod.Annotations["migration.my.domain/freeze-restart"] = "true"
+
+			if err := r.Patch(ctx, &srcPod, patch); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to apply freeze annotation: %w", err)
+			}
+
+			logger.Info("Applied freeze-restart annotation to source pod", "pod", srcPod.Name)
+
+			// Requeue to give the Kubelet time to see the annotation
+			// If you proceed to checkpoint immediately, the Kubelet might not have synced this update yet.
+			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+		}
+	}
+
 	// 3. If target node requested, validate it exists
 	if podMigration.Spec.TargetNode != "" {
 		var node corev1.Node
@@ -211,7 +235,8 @@ func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigr
 				},
 			},
 			Spec: lpmv1.PodCheckpointSpec{
-				PodName: &podMigration.Spec.PodName,
+				PodName:          &podMigration.Spec.PodName,
+				DeferTermination: podMigration.Spec.DeferTermination,
 			},
 		}
 		if err := r.Create(ctx, &podCheckpoint); err != nil {
@@ -267,7 +292,8 @@ func (r *PodMigrationReconciler) handleCheckpointingPhase(ctx context.Context, p
 				},
 			},
 			Spec: lpmv1.PodCheckpointSpec{
-				PodName: &podMigration.Spec.PodName,
+				PodName:          &podMigration.Spec.PodName,
+				DeferTermination: podMigration.Spec.DeferTermination,
 			},
 		}
 		if err := r.Create(ctx, &podCheckpoint); err != nil {
@@ -333,11 +359,7 @@ func (r *PodMigrationReconciler) handlePreparingImagesPhase(ctx context.Context,
 	}
 
 	// Get original pod to know what containers we need images for
-	var originalPod corev1.Pod
-	err = r.Get(ctx, client.ObjectKey{
-		Namespace: podMigration.Namespace,
-		Name:      podMigration.Spec.PodName,
-	}, &originalPod)
+	originalPod, err := r.getOriginalPod(ctx, podMigration)
 	if err != nil {
 		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, fmt.Sprintf("failed to get original pod: %v", err))
 	}
@@ -461,9 +483,49 @@ func (r *PodMigrationReconciler) handlePodRestoration(ctx context.Context, podMi
 		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, "restored pod failed to start")
 
 	case corev1.PodPending:
-		logger.Info("Restored pod is pending", "pod", restoredPod.Name, "reason", restoredPod.Status.Reason)
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		// 1. Check for Container Errors (ImagePullBackOff, etc.)
+		for _, status := range append(restoredPod.Status.InitContainerStatuses, restoredPod.Status.ContainerStatuses...) {
+			if status.State.Waiting != nil {
+				reason := status.State.Waiting.Reason
+				message := status.State.Waiting.Message
 
+				// List of fatal waiting states,
+				// not the cleanest way to detect error but seems like there isn't a better way
+				if reason == "ImagePullBackOff" ||
+					reason == "ErrImagePull" ||
+					reason == "CreateContainerError" ||
+					reason == "RunContainerError" ||
+					reason == "InvalidImageName" {
+
+					errMsg := fmt.Sprintf("Restored pod stuck in %s: %s", reason, message)
+					logger.Error(nil, errMsg, "pod", restoredPod.Name)
+					return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, errMsg)
+				}
+			}
+		}
+
+		// 2. Check for Scheduling Errors
+		for _, cond := range restoredPod.Status.Conditions {
+			if cond.Type == corev1.PodScheduled && cond.Status == corev1.ConditionFalse {
+				if cond.Reason == "Unschedulable" {
+					errMsg := fmt.Sprintf("Restored pod cannot be scheduled: %s", cond.Message)
+					logger.Error(nil, errMsg, "pod", restoredPod.Name)
+					return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, errMsg)
+				}
+			}
+		}
+
+		// 3. Hard Timeout Safety Net (e.g., 5 minutes)
+		// This catches edge cases not covered above (e.g., pending PVC binding)
+		if time.Since(restoredPod.CreationTimestamp.Time) > 5*time.Minute {
+			errMsg := "Restored pod timed out in Pending state ( > 5m)"
+			logger.Error(nil, errMsg, "pod", restoredPod.Name)
+			return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, errMsg)
+		}
+
+		// If no fatal errors found, keep waiting
+		logger.Info("Restored pod is pending", "pod", restoredPod.Name, "status", restoredPod.Status)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	default:
 		logger.Info("Restored pod in progress", "pod", restoredPod.Name, "phase", restoredPod.Status.Phase)
 		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
@@ -650,7 +712,30 @@ func (r *PodMigrationReconciler) restoreStatefulSetTemplate(ctx context.Context,
 	return nil
 }
 
-func (r *PodMigrationReconciler) handleCompletedOrFailedPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
+func (r *PodMigrationReconciler) handleFailedPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
+	originalPod, err := r.getOriginalPod(ctx, podMigration)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get original pod in Failed Phase: %w", err)
+	}
+
+	// Remove freezeRestart annotation if present to try and recover from failure
+	if originalPod.Annotations != nil {
+		if _, exists := originalPod.Annotations["migration.my.domain/freeze-restart"]; exists {
+			patchBase := client.MergeFrom(originalPod.DeepCopy())
+			delete(originalPod.Annotations, "migration.my.domain/freeze-restart")
+			if err := r.Patch(ctx, originalPod, patchBase); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to remove freeze annotation: %w", err)
+			}
+
+			log.FromContext(ctx).Info("Removed freeze annotation from source pod during failure recovery", "pod", originalPod.Name)
+		}
+	}
+
+	// Proceed to handle completed phase after error handling
+	return r.handleCompletedPhase(ctx, podMigration)
+}
+
+func (r *PodMigrationReconciler) handleCompletedPhase(ctx context.Context, podMigration *lpmv1.PodMigration) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
 	if podMigration.Status.StatefulSetRestore != nil {
@@ -690,20 +775,23 @@ func (r *PodMigrationReconciler) createRestoredPod(ctx context.Context, podMigra
 	restoredPod := originalPod.DeepCopy()
 
 	// Change only what's absolutely necessary
-	restoredPod.ObjectMeta.Name = fmt.Sprintf("%s-restored", originalPod.Name)
-	restoredPod.ObjectMeta.ResourceVersion = ""              // Required for creation
-	restoredPod.ObjectMeta.UID = ""                          // Required for creation
+	restoredPod.Name = fmt.Sprintf("%s-restored", originalPod.Name)
+	restoredPod.ResourceVersion = ""                         // Required for creation
+	restoredPod.UID = ""                                     // Required for creation
 	restoredPod.Spec.NodeName = podMigration.Spec.TargetNode // Target node
 
 	// Add migration tracking annotations
-	if restoredPod.ObjectMeta.Annotations == nil {
-		restoredPod.ObjectMeta.Annotations = make(map[string]string)
+	if restoredPod.Annotations == nil {
+		restoredPod.Annotations = make(map[string]string)
 	}
-	restoredPod.ObjectMeta.Annotations["migration.source-pod"] = originalPod.Name
-	restoredPod.ObjectMeta.Annotations["migration.target-node"] = podMigration.Spec.TargetNode
+	restoredPod.Annotations["migration.source-pod"] = originalPod.Name
+	restoredPod.Annotations["migration.target-node"] = podMigration.Spec.TargetNode
+
+	// Remove freeze-restart if present
+	delete(restoredPod.Annotations, "migration.my.domain/freeze-restart")
 
 	// Set owner reference
-	restoredPod.ObjectMeta.OwnerReferences = []metav1.OwnerReference{
+	restoredPod.OwnerReferences = []metav1.OwnerReference{
 		*metav1.NewControllerRef(podMigration, lpmv1.GroupVersion.WithKind("PodMigration")),
 	}
 

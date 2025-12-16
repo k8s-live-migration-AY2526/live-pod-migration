@@ -212,6 +212,7 @@ func (r *ContainerCheckpointReconciler) performContainerCheckpoint(ctx context.C
 		containerCheckpoint.Spec.PodName,
 		containerCheckpoint.Spec.ContainerName,
 		string(pod.UID),
+		containerCheckpoint.Spec.DeferTermination,
 	)
 }
 

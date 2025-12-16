@@ -6,3 +6,4 @@ metadata:
 spec:
   podName: statefulset-test-0  # StatefulSet pods have predictable names
   targetNode: k8s-master
+  deferTermination: true
