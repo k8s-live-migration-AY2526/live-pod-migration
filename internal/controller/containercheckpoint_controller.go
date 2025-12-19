@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -112,63 +113,35 @@ func (r *ContainerCheckpointReconciler) handlePendingPhase(ctx context.Context, 
 }
 
 func (r *ContainerCheckpointReconciler) handleCheckpointingPhase(ctx context.Context, containerCheckpoint *lpmv1.ContainerCheckpoint) (ctrl.Result, error) {
-	// Skip checkpoint operation if already completed
-	if containerCheckpoint.Status.BoundContentName != "" {
-		// Checkpoint already done, transition to succeeded
-		now := metav1.Now()
-		containerCheckpoint.Status.Ready = true
-		containerCheckpoint.Status.Phase = lpmv1.ContainerCheckpointPhaseSucceeded
-		containerCheckpoint.Status.Message = "done"
-		containerCheckpoint.Status.CompletionTime = &now
-		return ctrl.Result{}, r.Status().Update(ctx, containerCheckpoint)
+	logger := log.FromContext(ctx)
+
+	// Check if ContainerCheckpointContent exists (created by agent asynchronously)
+	contentName := containerCheckpoint.Name
+	containerCheckpointContent := &lpmv1.ContainerCheckpointContent{}
+	err := r.Get(ctx, client.ObjectKey{Name: contentName}, containerCheckpointContent)
+
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			// Content not created yet by agent, keep waiting
+			logger.Info("Waiting for ContainerCheckpointContent to be created", "name", contentName)
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		return ctrl.Result{}, err
 	}
 
-	// Perform the container checkpoint operation
-	artifactURI, err := r.performContainerCheckpoint(ctx, containerCheckpoint)
-	if err != nil {
+	// Content exists, check for error annotation
+	if errMsg, hasError := containerCheckpointContent.Annotations["error"]; hasError {
+		logger.Info("Checkpoint failed", "error", errMsg)
 		now := metav1.Now()
 		containerCheckpoint.Status.Phase = lpmv1.ContainerCheckpointPhaseFailed
-		containerCheckpoint.Status.Message = "checkpointing failed: " + err.Error()
+		containerCheckpoint.Status.Message = "checkpointing failed: " + errMsg
 		containerCheckpoint.Status.Ready = false
 		containerCheckpoint.Status.CompletionTime = &now
 		return ctrl.Result{}, r.Status().Update(ctx, containerCheckpoint)
 	}
 
-	// Use deterministic naming for content object
-	contentName := containerCheckpoint.Name
-
-	// Try to get existing content object
-	containerCheckpointContent := &lpmv1.ContainerCheckpointContent{}
-	err = r.Get(ctx, client.ObjectKey{Name: contentName}, containerCheckpointContent)
-
-	// Create content object if it doesn't exist
-	if err != nil {
-		if !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, err
-		}
-
-		containerCheckpointContent = &lpmv1.ContainerCheckpointContent{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: contentName,
-			},
-			Spec: lpmv1.ContainerCheckpointContentSpec{
-				ContainerCheckpointRef: corev1.ObjectReference{
-					Namespace: containerCheckpoint.Namespace,
-					Name:      containerCheckpoint.Name,
-				},
-				PodNamespace:  containerCheckpoint.Namespace,
-				PodName:       containerCheckpoint.Spec.PodName,
-				ContainerName: containerCheckpoint.Spec.ContainerName,
-				ArtifactURI:   artifactURI,
-			},
-		}
-
-		if err := r.Create(ctx, containerCheckpointContent); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
-	// Content already exists, mark checkpoint as complete
+	// Track checkpoint success
+	logger.Info("Checkpoint succeeded", "artifactURI", containerCheckpointContent.Spec.ArtifactURI)
 	now := metav1.Now()
 	containerCheckpoint.Status.BoundContentName = containerCheckpointContent.Name
 	containerCheckpoint.Status.Ready = true
@@ -219,6 +192,7 @@ func (r *ContainerCheckpointReconciler) performContainerCheckpoint(ctx context.C
 func (r *ContainerCheckpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&lpmv1.ContainerCheckpoint{}).
+		Owns(&lpmv1.ContainerCheckpointContent{}).
 		Named("containercheckpoint").
 		Complete(r)
 }
