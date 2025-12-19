@@ -138,9 +138,6 @@ scp ~/kubelet vagrant@192.168.56.12:~/ # copy binary to worker and worker2
 
 # To build crio (in VM)
 cd cri-o
-go mod edit -replace=k8s.io/cri-api=/home/vagrant/live-pod-migration-controller/kubernetes/staging/src/k8s.io/cri-api
-go mod tidy
-go mod vendor
 PATH=/home/vagrant/.go/bin:$PATH make # Override the go path to use 1.22.2
 mv bin/crio ~
 scp ~/crio vagrant@192.168.56.11:~/ # copy binary to worker and worker
@@ -150,13 +147,8 @@ scp ~/crio vagrant@192.168.56.12:~/ # copy binary to worker and worker2
 sudo systemctl stop crio
 sudo systemctl stop kubelet
 
-sudo mv /usr/bin/crio /usr/bin/crio.old
-sudo mv /usr/bin/kubelet /usr/bin/kubelet.old
-
 sudo cp ~/crio /usr/bin/crio
 sudo cp ~/kubelet /usr/bin/kubelet
-sudo chmod +x /usr/bin/crio
-sudo chmod +x /usr/bin/kubelet
 
 sudo systemctl daemon-reload
 sudo systemctl start crio

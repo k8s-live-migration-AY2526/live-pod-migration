@@ -30,9 +30,9 @@ spec:
       
       # 2. ACQUIRE NFS LOCK
       # This sends a request to the NFS server to lock this specific file.
-      # echo "Attempting to acquire lock..."
-      # flock -x 3
-      # echo "LOCK ACQUIRED on NFS. Starting write loop..."
+      echo "Attempting to acquire lock..."
+      flock -x 3
+      echo "LOCK ACQUIRED on NFS. Starting write loop..."
 
       COUNT=0
       while true; do
