@@ -41,7 +41,12 @@ kubectl exec -it writer-pod -- tail -f /data/migration.log
 kubectl exec -it writer-pod -- cat /data/migration.log
 ```
 
-4. **Trigger migration with deferTermination**
+4. **Observe file lock before migration**
+```bash
+sudo nfsdclnts --type lock
+```
+
+5. **Trigger migration with deferTermination**
 ```bash
 kubectl apply -f - <<EOF
 apiVersion: lpm.my.domain/v1
@@ -56,12 +61,12 @@ spec:
 EOF
 ```
 
-5. **Verify migration failed (due to opened-file modified by sourcePod that continues to run)**
+6. **Verify migration failed (due to opened-file modified by sourcePod that continues to run)**
 ```bash
 kubectl wait --for=jsonpath='{.status.phase}'=Failed podmigration/writer-pod-migration-defer-termination --timeout=5m
 ```
 
-6. **Trigger migration without deferTermination**
+7. **Trigger migration without deferTermination**
 ```bash
 kubectl delete pod writer-pod-restored
 
@@ -77,16 +82,17 @@ spec:
 EOF
 ```
 
-7. **Verify migration succeeded**
+8. **Verify migration succeeded**
 ```bash
 kubectl wait --for=jsonpath='{.status.phase}'=Succeeded podmigration/writer-pod-migration --timeout=5m
-```
+
+# File lock obtained by restored process
+sudo nfsdclnts --type lock
 
 # Restored pod running on worker2
 kubectl get pods -o wide
 
 # Pod should continue running successfully
-```bash
 kubectl exec -it writer-pod-restored -- tail -f /data/migration.log
 kubectl exec -it writer-pod-restored -- cat /data/migration.log
 ```
@@ -94,7 +100,7 @@ Expected:
 - Pod continues running
 - Counter increments without restarting 
 
-6. **Cleanup:**
+10. **Cleanup:**
 ```bash
 kubectl delete pod writer-pod writer-pod-restored --ignore-not-found=true
 kubectl delete podmigration writer-pod-migration writer-pod-migration-defer-termination  --ignore-not-found=true
