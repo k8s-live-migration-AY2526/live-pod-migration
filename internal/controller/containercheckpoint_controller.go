@@ -18,7 +18,6 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -160,32 +159,6 @@ func (r *ContainerCheckpointReconciler) updatePhase(ctx context.Context, contain
 	containerCheckpoint.Status.Phase = phase
 	containerCheckpoint.Status.Message = message
 	return r.Status().Update(ctx, containerCheckpoint)
-}
-
-func (r *ContainerCheckpointReconciler) performContainerCheckpoint(ctx context.Context, containerCheckpoint *lpmv1.ContainerCheckpoint) (string, error) {
-	// Get the pod to extract node name and UID
-	pod := &corev1.Pod{}
-	err := r.Get(ctx, client.ObjectKey{
-		Namespace: containerCheckpoint.Namespace,
-		Name:      containerCheckpoint.Spec.PodName,
-	}, pod)
-	if err != nil {
-		return "", fmt.Errorf("failed to get pod %s/%s: %w", containerCheckpoint.Namespace, containerCheckpoint.Spec.PodName, err)
-	}
-
-	// Ensure pod is scheduled to a node
-	if pod.Spec.NodeName == "" {
-		return "", fmt.Errorf("pod %s/%s is not scheduled to any node", containerCheckpoint.Namespace, containerCheckpoint.Spec.PodName)
-	}
-
-	// Call the agent to perform the container checkpoint operation
-	return r.Agent.CheckpointContainer(ctx,
-		pod.Spec.NodeName,
-		containerCheckpoint.Namespace,
-		containerCheckpoint.Spec.PodName,
-		containerCheckpoint.Spec.ContainerName,
-		string(pod.UID),
-	)
 }
 
 // SetupWithManager sets up the controller with the Manager.
