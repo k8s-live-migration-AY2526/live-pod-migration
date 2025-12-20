@@ -23,7 +23,7 @@ const (
 
 // Puller interface defines methods for ephemeral image pulling
 type Puller interface {
-	PullImages(ctx context.Context, nodeName string, images []string) (string, error)
+	PullImages(ctx context.Context, nodeName string, srcPodName string, images []string) (string, error)
 	CheckPullStatusAndCleanup(ctx context.Context, pullPodName string) (PullStatus, error)
 }
 
@@ -42,8 +42,8 @@ func NewEphemeralPuller(c client.Client, namespace string) *EphemeralPuller {
 }
 
 // PullImage creates an ephemeral pod to pull the image
-func (p *EphemeralPuller) PullImages(ctx context.Context, nodeName string, images []string) (string, error) {
-	podName := p.getPodName(nodeName, images)
+func (p *EphemeralPuller) PullImages(ctx context.Context, nodeName string, srcPodName string, images []string) (string, error) {
+	podName := p.getPodName(nodeName, srcPodName, images)
 
 	// Check if pod already exists
 	var existingPod corev1.Pod
@@ -122,9 +122,8 @@ func hashStringList(list []string) string {
 }
 
 // getPodName generates a deterministic pod name for ephemeral pull
-func (p *EphemeralPuller) getPodName(nodeName string, images []string) string {
-	// Replace slashes and colons to make a valid pod name
-	return fmt.Sprintf("pull-%s-%s", nodeName, hashStringList(images))
+func (p *EphemeralPuller) getPodName(nodeName string, srcPodName string, images []string) string {
+	return fmt.Sprintf("pull-%s-%s-%s", nodeName, srcPodName, hashStringList(images))
 }
 
 // helper functions
