@@ -111,7 +111,7 @@ func (r *PodMigrationReconciler) handlePrePullImagesPhase(ctx context.Context, p
 			imagesToPull = append(imagesToPull, c.Image)
 		}
 
-		podName, err := r.Puller.PullImages(ctx, podMigration.Spec.TargetNode, imagesToPull)
+		podName, err := r.Puller.PullImages(ctx, podMigration.Spec.TargetNode, originalPod.Name, imagesToPull)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to create pull pod: %w", err)
 		}
