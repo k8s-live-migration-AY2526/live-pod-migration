@@ -29,43 +29,6 @@ func NewClient(k8sClient client.Client) *Client {
 	}
 }
 
-// CheckpointContainer performs a checkpoint operation on a container
-func (c *Client) CheckpointContainer(ctx context.Context, nodeName, podNamespace, podName, containerName, podUID string, deferTermination bool) (string, error) {
-	// Create gRPC connection to agent
-	conn, err := c.dialAgent(ctx, nodeName)
-	if err != nil {
-		return "", fmt.Errorf("failed to connect to agent on node %s: %w", nodeName, err)
-	}
-	defer func() {
-		if err := conn.Close(); err != nil {
-			// Log error but don't fail the operation
-		}
-	}()
-
-	// Create checkpoint service client
-	checkpointClient := pb.NewCheckpointServiceClient(conn)
-
-	// Perform checkpoint
-	req := &pb.CheckpointRequest{
-		PodNamespace:     podNamespace,
-		PodName:          podName,
-		ContainerName:    containerName,
-		PodUid:           podUID,
-		DeferTermination: deferTermination,
-	}
-
-	resp, err := checkpointClient.Checkpoint(ctx, req)
-	if err != nil {
-		return "", fmt.Errorf("checkpoint RPC failed: %w", err)
-	}
-
-	if !resp.Success {
-		return "", fmt.Errorf("checkpoint failed: %s", resp.Error)
-	}
-
-	return resp.ArtifactUri, nil
-}
-
 // ConvertCheckpointToImage converts a checkpoint file to OCI image format
 func (c *Client) ConvertCheckpointToImage(ctx context.Context, nodeName, checkpointPath, containerName, imageName string) (string, error) {
 	// Create gRPC connection to agent
