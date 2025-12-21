@@ -75,12 +75,13 @@ func NewCheckpointServer() *CheckpointServer {
 
 // Checkpoint implements the checkpoint operation
 func (s *CheckpointServer) Checkpoint(ctx context.Context, req *pb.CheckpointRequest) (*pb.CheckpointResponse, error) {
-	log.Printf("Checkpoint request: namespace=%s, pod=%s, container=%s, uid=%s",
+	logger := log.FromContext(ctx)
+	logger.Info("Checkpoint request: namespace=%s, pod=%s, container=%s, uid=%s",
 		req.PodNamespace, req.PodName, req.ContainerName, req.PodUid)
 
 	// Ensure checkpoint directory exists
 	if err := os.MkdirAll(checkpointDir, 0755); err != nil {
-		log.Printf("Failed to create checkpoint directory: %v", err)
+		logger.Info("Failed to create checkpoint directory: %v", err)
 		return &pb.CheckpointResponse{
 			Success: false,
 			Error:   fmt.Sprintf("failed to create checkpoint directory: %v", err),
@@ -91,9 +92,9 @@ func (s *CheckpointServer) Checkpoint(ctx context.Context, req *pb.CheckpointReq
 	url := fmt.Sprintf("https://%s:10250/checkpoint/%s/%s/%s",
 		s.nodeName, req.PodNamespace, req.PodName, req.ContainerName)
 
-	httpClient, err := s.makeTLSClient()
+	httpClient, err := s.makeTLSClient(ctx)
 	if err != nil {
-		log.Printf("Failed to create TLS client: %v", err)
+		logger.Info("Failed to create TLS client: %v", err)
 		return &pb.CheckpointResponse{
 			Success: false,
 			Error:   fmt.Sprintf("failed to create TLS client: %v", err),
@@ -102,7 +103,7 @@ func (s *CheckpointServer) Checkpoint(ctx context.Context, req *pb.CheckpointReq
 
 	checkpointFiles, err := s.doCheckpointWithBackoff(ctx, httpClient, url)
 	if err != nil {
-		log.Printf("Failed to create checkpoint: %v", err)
+		logger.Info("Failed to create checkpoint: %v", err)
 		return &pb.CheckpointResponse{
 			Success: false,
 			Error:   fmt.Sprintf("checkpoint failed: %v", err),
@@ -119,10 +120,10 @@ func (s *CheckpointServer) Checkpoint(ctx context.Context, req *pb.CheckpointReq
 	// Copy checkpoint to shared storage
 	sharedPath, err := s.copyToSharedStorage(req.PodUid, req.ContainerName, checkpointFiles[0])
 	if err != nil {
-		log.Printf("Failed to copy to shared storage: %v", err)
+		logger.Info("Failed to copy to shared storage: %v", err)
 		// Return local path as fallback
 		artifactURI := fmt.Sprintf("file://%s", checkpointFiles[0])
-		log.Printf("Checkpoint created successfully: %s", artifactURI)
+		logger.Info("Checkpoint created successfully: %s", artifactURI)
 		return &pb.CheckpointResponse{
 			Success:     true,
 			ArtifactUri: artifactURI,
@@ -132,7 +133,7 @@ func (s *CheckpointServer) Checkpoint(ctx context.Context, req *pb.CheckpointReq
 
 	// Return shared path
 	artifactURI := fmt.Sprintf("shared://%s", sharedPath)
-	log.Printf("Checkpoint created successfully: %s", artifactURI)
+	logger.Info("Checkpoint created successfully: %s", artifactURI)
 	return &pb.CheckpointResponse{
 		Success:     true,
 		ArtifactUri: artifactURI,
@@ -205,7 +206,8 @@ func (s *CheckpointServer) Health(_ context.Context, _ *pb.HealthRequest) (*pb.H
 }
 
 // makeTLSClient creates an HTTP client with TLS configuration for kubelet
-func (s *CheckpointServer) makeTLSClient() (*http.Client, error) {
+func (s *CheckpointServer) makeTLSClient(ctx context.Context) (*http.Client, error) {
+	logger := log.FromContext(ctx)
 	// Try different certificate path combinations
 	certPaths := []struct {
 		cert string
@@ -245,34 +247,34 @@ func (s *CheckpointServer) makeTLSClient() (*http.Client, error) {
 	for _, paths := range certPaths {
 		// Check if all required files exist
 		if _, err := os.Stat(paths.cert); os.IsNotExist(err) {
-			log.Printf("Certificate file not found: %s", paths.cert)
+			logger.Info("Certificate file not found: %s", paths.cert)
 			continue
 		}
 		if _, err := os.Stat(paths.key); os.IsNotExist(err) {
-			log.Printf("Key file not found: %s", paths.key)
+			logger.Info("Key file not found: %s", paths.key)
 			continue
 		}
 		if _, err := os.Stat(paths.ca); os.IsNotExist(err) {
-			log.Printf("CA file not found: %s", paths.ca)
+			logger.Info("CA file not found: %s", paths.ca)
 			continue
 		}
 
 		// Try to load the certificate
 		cert, err = tls.LoadX509KeyPair(paths.cert, paths.key)
 		if err != nil {
-			log.Printf("Failed to load certificates from %s/%s (%s): %v", paths.cert, paths.key, paths.desc, err)
+			logger.Info("Failed to load certificates from %s/%s (%s): %v", paths.cert, paths.key, paths.desc, err)
 			continue
 		}
 
 		// Try to load the CA
 		caBytes, err = os.ReadFile(paths.ca)
 		if err != nil {
-			log.Printf("Failed to load CA from %s (%s): %v", paths.ca, paths.desc, err)
+			logger.Info("Failed to load CA from %s (%s): %v", paths.ca, paths.desc, err)
 			continue
 		}
 
 		workingPaths = fmt.Sprintf("%s (cert=%s, key=%s, ca=%s)", paths.desc, paths.cert, paths.key, paths.ca)
-		log.Printf("Successfully loaded certificates: %s", workingPaths)
+		logger.Info("Successfully loaded certificates: %s", workingPaths)
 		break
 	}
 
@@ -301,6 +303,7 @@ func (s *CheckpointServer) makeTLSClient() (*http.Client, error) {
 func (s *CheckpointServer) doCheckpointWithBackoff(ctx context.Context, httpClient *http.Client, url string) ([]string, error) {
 	var checkpointFiles []string
 	var lastErr error
+	logger := log.FromContext(ctx)
 
 	bo := wait.Backoff{
 		Steps:    checkpointBackoffSteps,
@@ -318,19 +321,19 @@ func (s *CheckpointServer) doCheckpointWithBackoff(ctx context.Context, httpClie
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			lastErr = fmt.Errorf("kubelet request failed: %w", err)
-			log.Printf("Kubelet request failed, retrying: %v", err)
+			logger.Info("Kubelet request failed, retrying: %v", err)
 			return false, nil
 		}
 		defer func() {
 			if err := resp.Body.Close(); err != nil {
-				log.Printf("Failed to close response body: %v", err)
+				logger.Info("Failed to close response body: %v", err)
 			}
 		}()
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			data, _ := io.ReadAll(resp.Body)
 			lastErr = fmt.Errorf("kubelet responded %d: %s", resp.StatusCode, string(data))
-			log.Printf("Non-2xx from kubelet, retrying: %s", lastErr)
+			logger.Info("Non-2xx from kubelet, retrying: %s", lastErr)
 			return false, nil
 		}
 
@@ -354,7 +357,7 @@ func (s *CheckpointServer) doCheckpointWithBackoff(ctx context.Context, httpClie
 		}
 
 		checkpointFiles = parsed.Items
-		log.Printf("Checkpoint created successfully, files: %v", checkpointFiles)
+		logger.Info("Checkpoint created successfully, files: %v", checkpointFiles)
 		return true, nil
 	})
 
