@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -31,7 +30,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -76,8 +75,11 @@ func NewCheckpointServer() *CheckpointServer {
 
 // ConvertCheckpointToImage converts a checkpoint tar file to OCI image format
 func (s *CheckpointServer) ConvertCheckpointToImage(ctx context.Context, req *pb.ConvertRequest) (*pb.ConvertResponse, error) {
-	log.Printf("Convert request: checkpoint_path=%s, container_name=%s, image_name=%s",
-		req.CheckpointPath, req.ContainerName, req.ImageName)
+	logger := log.FromContext(ctx)
+	logger.Info("Convert request",
+		"checkpoint_path", req.CheckpointPath,
+		"container_name", req.ContainerName,
+		"image_name", req.ImageName)
 
 	// Validate input
 	if req.CheckpointPath == "" {
@@ -110,16 +112,16 @@ func (s *CheckpointServer) ConvertCheckpointToImage(ctx context.Context, req *pb
 	}
 
 	// Convert checkpoint to OCI image using buildah
-	imageRef, err := s.convertCheckpointToOCI(checkpointPath, req.ContainerName, req.ImageName)
+	imageRef, err := s.convertCheckpointToOCI(ctx, checkpointPath, req.ContainerName, req.ImageName)
 	if err != nil {
-		log.Printf("Failed to convert checkpoint to OCI: %v", err)
+		logger.Error(err, "Failed to convert checkpoint to OCI")
 		return &pb.ConvertResponse{
 			Success: false,
 			Error:   fmt.Sprintf("conversion failed: %v", err),
 		}, nil
 	}
 
-	log.Printf("Successfully converted checkpoint to OCI image: %s", imageRef)
+	logger.Info("Successfully converted checkpoint to OCI image", "imageRef", imageRef)
 	return &pb.ConvertResponse{
 		Success:        true,
 		ImageReference: imageRef,
@@ -136,29 +138,30 @@ func (s *CheckpointServer) Health(_ context.Context, _ *pb.HealthRequest) (*pb.H
 }
 
 func main() {
+	log.SetLogger(zap.New(zap.UseDevMode(true)))
+	logger := log.Log.WithName("setup")
+
 	nodeName := os.Getenv("NODE_NAME")
 	if nodeName == "" {
-		log.Fatal("NODE_NAME environment variable must be set")
+		logger.Error(nil, "NODE_NAME environment variable must be set")
+		os.Exit(1)
 	}
-
-	// Setup logger
-	ctrllog.SetLogger(zap.New(zap.UseDevMode(true)))
-	setupLog := ctrllog.Log.WithName("setup")
-	setupLog.Info("Starting checkpoint agent on node " + nodeName)
+	logger.Info("Starting checkpoint agent on node " + nodeName)
 
 	// Ensure checkpoint directory exists
 	if err := os.MkdirAll(checkpointDir, 0755); err != nil {
-		log.Fatalf("Failed to create checkpoint directory: %v", err)
+		logger.Error(err, "Failed to create checkpoint directory")
+		os.Exit(1)
 	}
 
 	// Build scheme
 	scheme := runtime.NewScheme()
 	if err := lpmv1.AddToScheme(scheme); err != nil {
-		setupLog.Error(err, "Failed to add lpm types to scheme")
+		logger.Error(err, "Failed to add lpm types to scheme")
 		os.Exit(1)
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
-		setupLog.Error(err, "Failed to add core types to scheme")
+		logger.Error(err, "Failed to add core types to scheme")
 		os.Exit(1)
 	}
 
@@ -175,7 +178,7 @@ func main() {
 		HealthProbeBindAddress: ":8081",
 	})
 	if err != nil {
-		setupLog.Error(err, "Failed to create manager")
+		logger.Error(err, "Failed to create manager")
 		os.Exit(1)
 	}
 
@@ -194,7 +197,7 @@ func main() {
 			return reconciler.isForThisNode(context.Background(), checkpoint)
 		})).
 		Complete(reconciler); err != nil {
-		setupLog.Error(err, "Failed to create controller")
+		logger.Error(err, "Failed to create controller")
 		os.Exit(1)
 	}
 
@@ -202,14 +205,14 @@ func main() {
 	if err := mgr.AddHealthzCheck("healthz", func(req *http.Request) error {
 		return nil
 	}); err != nil {
-		setupLog.Error(err, "Failed to add health check")
+		logger.Error(err, "Failed to add health check")
 		os.Exit(1)
 	}
 
 	if err := mgr.AddReadyzCheck("readyz", func(req *http.Request) error {
 		return nil
 	}); err != nil {
-		setupLog.Error(err, "Failed to add ready check")
+		logger.Error(err, "Failed to add ready check")
 		os.Exit(1)
 	}
 
@@ -219,9 +222,9 @@ func main() {
 
 	// Start manager in background
 	go func() {
-		setupLog.Info("Starting manager")
+		logger.Info("Starting manager")
 		if err := mgr.Start(ctx); err != nil {
-			setupLog.Error(err, "Failed to start manager")
+			logger.Error(err, "Failed to start manager")
 			os.Exit(1)
 		}
 	}()
@@ -229,7 +232,8 @@ func main() {
 	// Create gRPC server
 	lis, err := net.Listen("tcp", port)
 	if err != nil {
-		log.Fatalf("Failed to listen: %v", err)
+		logger.Error(err, "Failed to listen")
+		os.Exit(1)
 	}
 
 	// Configure gRPC server with larger message size
@@ -256,14 +260,15 @@ func main() {
 		signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 		<-sigChan
 
-		log.Println("Shutting down checkpoint agent...")
+		logger.Info("Shutting down checkpoint agent...")
 		cancel() // Stop the CheckpointReconciler watcher
 		s.GracefulStop()
 	}()
 
-	log.Printf("Checkpoint agent listening on %s", port)
+	logger.Info("Checkpoint agent listening", "port", port)
 	if err := s.Serve(lis); err != nil {
-		log.Fatalf("Failed to serve: %v", err)
+		logger.Error(err, "Failed to serve")
+		os.Exit(1)
 	}
 }
 
@@ -275,14 +280,14 @@ type CheckpointReconciler struct {
 
 // Reconcile processes ContainerCheckpoint events
 func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	log := ctrllog.FromContext(ctx)
+	logger := log.FromContext(ctx)
 
 	var checkpoint lpmv1.ContainerCheckpoint
 	if err := r.Get(ctx, req.NamespacedName, &checkpoint); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	log.Info("Detected ContainerCheckpoint CR",
+	logger.Info("Detected ContainerCheckpoint CR",
 		"namespace", checkpoint.Namespace,
 		"name", checkpoint.Name,
 		"pod", checkpoint.Spec.PodName,
@@ -300,7 +305,7 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	err := r.Get(ctx, client.ObjectKey{Name: contentName}, containerCheckpointContent)
 	if err == nil {
 		// Content already exists, nothing to do
-		log.Info("ContainerCheckpointContent already exists", "name", contentName)
+		logger.Info("ContainerCheckpointContent already exists", "name", contentName)
 		return ctrl.Result{}, nil
 	}
 	if !apierrors.IsNotFound(err) {
@@ -313,20 +318,20 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		Namespace: checkpoint.Namespace,
 		Name:      checkpoint.Spec.PodName,
 	}, pod); err != nil {
-		log.Error(err, "Failed to get pod")
+		logger.Error(err, "Failed to get pod")
 		return ctrl.Result{}, err
 	}
 
 	// Ensure checkpoint directory exists
 	if err := os.MkdirAll(checkpointDir, 0755); err != nil {
-		log.Error(err, "Failed to create checkpoint directory")
+		logger.Error(err, "Failed to create checkpoint directory")
 		return ctrl.Result{}, err
 	}
 
 	// Perform checkpoint operation
 	artifactURI, err := r.performCheckpoint(ctx, pod, checkpoint.Spec.ContainerName)
 	if err != nil {
-		log.Error(err, "Failed to perform checkpoint")
+		logger.Error(err, "Failed to perform checkpoint")
 		// Create content with error status to signal failure
 		containerCheckpointContent = &lpmv1.ContainerCheckpointContent{
 			ObjectMeta: metav1.ObjectMeta{
@@ -366,7 +371,7 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		},
 	}
 
-	log.Info("Creating ContainerCheckpointContent", "name", contentName, "artifactURI", artifactURI)
+	logger.Info("Creating ContainerCheckpointContent", "name", contentName, "artifactURI", artifactURI)
 	return ctrl.Result{}, r.Create(ctx, containerCheckpointContent)
 }
 
@@ -389,7 +394,7 @@ func (r *CheckpointReconciler) performCheckpoint(ctx context.Context, pod *corev
 	url := fmt.Sprintf("https://%s:10250/checkpoint/%s/%s/%s",
 		r.NodeName, pod.Namespace, pod.Name, containerName)
 
-	httpClient, err := r.makeTLSClient()
+	httpClient, err := r.makeTLSClient(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to create TLS client: %w", err)
 	}
@@ -413,7 +418,8 @@ func (r *CheckpointReconciler) performCheckpoint(ctx context.Context, pod *corev
 }
 
 // makeTLSClient creates an HTTP client with TLS configuration for kubelet
-func (r *CheckpointReconciler) makeTLSClient() (*http.Client, error) {
+func (r *CheckpointReconciler) makeTLSClient(ctx context.Context) (*http.Client, error) {
+	logger := log.FromContext(ctx)
 	// Try different certificate path combinations
 	certPaths := []struct {
 		cert string
@@ -453,34 +459,41 @@ func (r *CheckpointReconciler) makeTLSClient() (*http.Client, error) {
 	for _, paths := range certPaths {
 		// Check if all required files exist
 		if _, err := os.Stat(paths.cert); os.IsNotExist(err) {
-			log.Printf("Certificate file not found: %s", paths.cert)
+			logger.Info("Certificate file not found", "path", paths.cert)
 			continue
 		}
 		if _, err := os.Stat(paths.key); os.IsNotExist(err) {
-			log.Printf("Key file not found: %s", paths.key)
+			logger.Info("Key file not found", "path", paths.key)
 			continue
 		}
 		if _, err := os.Stat(paths.ca); os.IsNotExist(err) {
-			log.Printf("CA file not found: %s", paths.ca)
+			logger.Info("CA file not found", "path", paths.ca)
 			continue
 		}
 
 		// Try to load the certificate
 		cert, err = tls.LoadX509KeyPair(paths.cert, paths.key)
 		if err != nil {
-			log.Printf("Failed to load certificates from %s/%s (%s): %v", paths.cert, paths.key, paths.desc, err)
+			logger.Info("Failed to load certificates",
+				"cert", paths.cert,
+				"key", paths.key,
+				"desc", paths.desc,
+				"error", err)
 			continue
 		}
 
 		// Try to load the CA
 		caBytes, err = os.ReadFile(paths.ca)
 		if err != nil {
-			log.Printf("Failed to load CA from %s (%s): %v", paths.ca, paths.desc, err)
+			logger.Info("Failed to load CA",
+				"ca", paths.ca,
+				"desc", paths.desc,
+				"error", err)
 			continue
 		}
 
 		workingPaths = fmt.Sprintf("%s (cert=%s, key=%s, ca=%s)", paths.desc, paths.cert, paths.key, paths.ca)
-		log.Printf("Successfully loaded certificates: %s", workingPaths)
+		logger.Info("Successfully loaded certificates", "paths", workingPaths)
 		break
 	}
 
@@ -556,7 +569,8 @@ func (r *CheckpointReconciler) doCheckpointWithBackoff(ctx context.Context, http
 		}
 
 		checkpointFiles = parsed.Items
-		log.Printf("Checkpoint created successfully, files: %v", checkpointFiles)
+		logger := log.FromContext(ctx)
+		logger.Info("Checkpoint created successfully", "files", checkpointFiles)
 		return true, nil
 	})
 
@@ -595,8 +609,9 @@ func (r *CheckpointReconciler) copyToSharedStorage(podUID, containerName, localP
 }
 
 // convertCheckpointToOCI converts a checkpoint tar file to OCI image format using buildah
-func (s *CheckpointServer) convertCheckpointToOCI(checkpointPath, containerName, imageName string) (string, error) {
-	log.Printf("Converting checkpoint %s to OCI image %s", checkpointPath, imageName)
+func (s *CheckpointServer) convertCheckpointToOCI(ctx context.Context, checkpointPath, containerName, imageName string) (string, error) {
+	logger := log.FromContext(ctx)
+	logger.Info("Converting checkpoint to OCI image", "checkpointPath", checkpointPath, "imageName", imageName)
 
 	// Common buildah flags to use the mounted container storage
 	buildahFlags := []string{"--root", "/var/lib/containers/storage"}
@@ -609,13 +624,15 @@ func (s *CheckpointServer) convertCheckpointToOCI(checkpointPath, containerName,
 	}
 
 	containerID := strings.TrimSpace(string(output))
-	log.Printf("Created working container: %s", containerID)
+	logger.Info("Created working container", "containerID", containerID)
 
 	// Clean up working container on exit
 	defer func() {
 		cmd := exec.Command("buildah", append(buildahFlags, "rm", containerID)...)
 		if err := cmd.Run(); err != nil {
-			log.Printf("Warning: failed to remove working container %s: %v", containerID, err)
+			logger.Info("Warning: failed to remove working container",
+				"containerID", containerID,
+				"error", err)
 		}
 	}()
 
@@ -639,6 +656,6 @@ func (s *CheckpointServer) convertCheckpointToOCI(checkpointPath, containerName,
 		return "", fmt.Errorf("failed to commit container as image: %v", err)
 	}
 
-	log.Printf("Successfully created OCI image: %s", imageName)
+	logger.Info("Successfully created OCI image", "imageName", imageName)
 	return imageName, nil
 }
