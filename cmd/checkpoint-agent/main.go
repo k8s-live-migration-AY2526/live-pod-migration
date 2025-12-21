@@ -73,6 +73,73 @@ func NewCheckpointServer() *CheckpointServer {
 	}
 }
 
+// Checkpoint implements the checkpoint operation
+func (s *CheckpointServer) Checkpoint(ctx context.Context, req *pb.CheckpointRequest) (*pb.CheckpointResponse, error) {
+	log.Printf("Checkpoint request: namespace=%s, pod=%s, container=%s, uid=%s",
+		req.PodNamespace, req.PodName, req.ContainerName, req.PodUid)
+
+	// Ensure checkpoint directory exists
+	if err := os.MkdirAll(checkpointDir, 0755); err != nil {
+		log.Printf("Failed to create checkpoint directory: %v", err)
+		return &pb.CheckpointResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create checkpoint directory: %v", err),
+		}, nil
+	}
+
+	// Create checkpoint using kubelet API
+	url := fmt.Sprintf("https://%s:10250/checkpoint/%s/%s/%s",
+		s.nodeName, req.PodNamespace, req.PodName, req.ContainerName)
+
+	httpClient, err := s.makeTLSClient()
+	if err != nil {
+		log.Printf("Failed to create TLS client: %v", err)
+		return &pb.CheckpointResponse{
+			Success: false,
+			Error:   fmt.Sprintf("failed to create TLS client: %v", err),
+		}, nil
+	}
+
+	checkpointFiles, err := s.doCheckpointWithBackoff(ctx, httpClient, url)
+	if err != nil {
+		log.Printf("Failed to create checkpoint: %v", err)
+		return &pb.CheckpointResponse{
+			Success: false,
+			Error:   fmt.Sprintf("checkpoint failed: %v", err),
+		}, nil
+	}
+
+	if len(checkpointFiles) == 0 {
+		return &pb.CheckpointResponse{
+			Success: false,
+			Error:   "no checkpoint files created",
+		}, nil
+	}
+
+	// Copy checkpoint to shared storage
+	sharedPath, err := s.copyToSharedStorage(req.PodUid, req.ContainerName, checkpointFiles[0])
+	if err != nil {
+		log.Printf("Failed to copy to shared storage: %v", err)
+		// Return local path as fallback
+		artifactURI := fmt.Sprintf("file://%s", checkpointFiles[0])
+		log.Printf("Checkpoint created successfully: %s", artifactURI)
+		return &pb.CheckpointResponse{
+			Success:     true,
+			ArtifactUri: artifactURI,
+			Message:     "checkpoint created successfully",
+		}, nil
+	}
+
+	// Return shared path
+	artifactURI := fmt.Sprintf("shared://%s", sharedPath)
+	log.Printf("Checkpoint created successfully: %s", artifactURI)
+	return &pb.CheckpointResponse{
+		Success:     true,
+		ArtifactUri: artifactURI,
+		Message:     "checkpoint created successfully",
+	}, nil
+}
+
 // ConvertCheckpointToImage converts a checkpoint tar file to OCI image format
 func (s *CheckpointServer) ConvertCheckpointToImage(ctx context.Context, req *pb.ConvertRequest) (*pb.ConvertResponse, error) {
 	logger := log.FromContext(ctx)
@@ -135,6 +202,167 @@ func (s *CheckpointServer) Health(_ context.Context, _ *pb.HealthRequest) (*pb.H
 		Healthy: true,
 		Message: fmt.Sprintf("checkpoint agent healthy on node %s", s.nodeName),
 	}, nil
+}
+
+// makeTLSClient creates an HTTP client with TLS configuration for kubelet
+func (s *CheckpointServer) makeTLSClient() (*http.Client, error) {
+	// Try different certificate path combinations
+	certPaths := []struct {
+		cert string
+		key  string
+		ca   string
+		desc string
+	}{
+		// Worker node paths (kubelet auto-generated)
+		{
+			cert: "/var/lib/kubelet/pki/kubelet-client-current.pem",
+			key:  "/var/lib/kubelet/pki/kubelet-client-current.pem",
+			ca:   "/etc/kubernetes/pki/ca.crt",
+			desc: "worker node (kubelet auto-generated)",
+		},
+		// Master node paths (kubeadm generated)
+		{
+			cert: "/etc/kubernetes/pki/apiserver-kubelet-client.crt",
+			key:  "/etc/kubernetes/pki/apiserver-kubelet-client.key",
+			ca:   "/etc/kubernetes/pki/ca.crt",
+			desc: "master node (kubeadm generated)",
+		},
+		// Alternative master node paths
+		{
+			cert: "/etc/kubernetes/pki/apiserver-kubelet-client.crt",
+			key:  "/etc/kubernetes/pki/apiserver-kubelet-client.key",
+			ca:   "/var/lib/kubelet/pki/kubelet.crt",
+			desc: "master node (alternative CA)",
+		},
+	}
+
+	var cert tls.Certificate
+	var caBytes []byte
+	var err error
+	var workingPaths string
+
+	// Try each certificate path combination
+	for _, paths := range certPaths {
+		// Check if all required files exist
+		if _, err := os.Stat(paths.cert); os.IsNotExist(err) {
+			log.Printf("Certificate file not found: %s", paths.cert)
+			continue
+		}
+		if _, err := os.Stat(paths.key); os.IsNotExist(err) {
+			log.Printf("Key file not found: %s", paths.key)
+			continue
+		}
+		if _, err := os.Stat(paths.ca); os.IsNotExist(err) {
+			log.Printf("CA file not found: %s", paths.ca)
+			continue
+		}
+
+		// Try to load the certificate
+		cert, err = tls.LoadX509KeyPair(paths.cert, paths.key)
+		if err != nil {
+			log.Printf("Failed to load certificates from %s/%s (%s): %v", paths.cert, paths.key, paths.desc, err)
+			continue
+		}
+
+		// Try to load the CA
+		caBytes, err = os.ReadFile(paths.ca)
+		if err != nil {
+			log.Printf("Failed to load CA from %s (%s): %v", paths.ca, paths.desc, err)
+			continue
+		}
+
+		workingPaths = fmt.Sprintf("%s (cert=%s, key=%s, ca=%s)", paths.desc, paths.cert, paths.key, paths.ca)
+		log.Printf("Successfully loaded certificates: %s", workingPaths)
+		break
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to load client certificate from any known location: %w", err)
+	}
+
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caBytes) {
+		return nil, fmt.Errorf("failed to parse CA certificate from %s", workingPaths)
+	}
+
+	return &http.Client{
+		Timeout: checkpointTimeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				Certificates:       []tls.Certificate{cert},
+				RootCAs:            pool,
+				InsecureSkipVerify: true, // Skip verification due to IP SAN issues
+			},
+		},
+	}, nil
+}
+
+// doCheckpointWithBackoff calls kubelet checkpoint API with exponential backoff
+func (s *CheckpointServer) doCheckpointWithBackoff(ctx context.Context, httpClient *http.Client, url string) ([]string, error) {
+	var checkpointFiles []string
+	var lastErr error
+
+	bo := wait.Backoff{
+		Steps:    checkpointBackoffSteps,
+		Duration: checkpointBackoffInitial,
+		Factor:   checkpointBackoffFactor,
+	}
+
+	err := wait.ExponentialBackoff(bo, func() (bool, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to create request: %w", err)
+			return false, nil
+		}
+
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("kubelet request failed: %w", err)
+			log.Printf("Kubelet request failed, retrying: %v", err)
+			return false, nil
+		}
+		defer func() {
+			if err := resp.Body.Close(); err != nil {
+				log.Printf("Failed to close response body: %v", err)
+			}
+		}()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			data, _ := io.ReadAll(resp.Body)
+			lastErr = fmt.Errorf("kubelet responded %d: %s", resp.StatusCode, string(data))
+			log.Printf("Non-2xx from kubelet, retrying: %s", lastErr)
+			return false, nil
+		}
+
+		data, err := io.ReadAll(resp.Body)
+		if err != nil {
+			lastErr = fmt.Errorf("failed to read response: %w", err)
+			return false, nil
+		}
+
+		var parsed struct {
+			Items []string `json:"items"`
+		}
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			lastErr = fmt.Errorf("failed to parse kubelet JSON response: %w", err)
+			return false, nil
+		}
+
+		if len(parsed.Items) == 0 {
+			lastErr = fmt.Errorf("no checkpoint files returned by kubelet")
+			return false, nil
+		}
+
+		checkpointFiles = parsed.Items
+		log.Printf("Checkpoint created successfully, files: %v", checkpointFiles)
+		return true, nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("checkpoint failed after retries: %w", lastErr)
+	}
+
+	return checkpointFiles, nil
 }
 
 func main() {
@@ -658,4 +886,33 @@ func (s *CheckpointServer) convertCheckpointToOCI(ctx context.Context, checkpoin
 
 	logger.Info("Successfully created OCI image", "imageName", imageName)
 	return imageName, nil
+}
+
+// copyToSharedStorage copies checkpoint to shared NFS mount
+func (s *CheckpointServer) copyToSharedStorage(podUID, containerName, localPath string) (string, error) {
+	// Simple path: <checkpointsMountPath>/<podUID>-<container>-<timestamp>.tar
+	timestamp := time.Now().Format("20060102-150405")
+	filename := fmt.Sprintf("%s-%s-%s.tar", podUID, containerName, timestamp)
+	sharedPath := filepath.Join(checkpointsMountPath, filename)
+
+	// Copy file
+	sourceFile, err := os.Open(localPath)
+	if err != nil {
+		return "", err
+	}
+	defer sourceFile.Close()
+
+	destFile, err := os.Create(sharedPath)
+	if err != nil {
+		return "", err
+	}
+	defer destFile.Close()
+
+	_, err = io.Copy(destFile, sourceFile)
+	if err != nil {
+		return "", err
+	}
+
+	// Return relative path for shared:// URI
+	return filename, destFile.Sync()
 }
