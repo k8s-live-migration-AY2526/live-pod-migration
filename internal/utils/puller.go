@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
-	"sort"
-	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -41,9 +39,9 @@ func NewEphemeralPuller(c client.Client, namespace string) *EphemeralPuller {
 	}
 }
 
-// PullImage creates an ephemeral pod to pull the image
+// PullImages creates an ephemeral pod to pull the specified images
 func (p *EphemeralPuller) PullImages(ctx context.Context, nodeName string, srcPodName string, images []string) (string, error) {
-	podName := p.getPodName(nodeName, srcPodName, images)
+	podName := p.getPodName(nodeName, srcPodName)
 
 	// Check if pod already exists
 	var existingPod corev1.Pod
@@ -111,19 +109,13 @@ func (p *EphemeralPuller) CheckPullStatusAndCleanup(ctx context.Context, pullPod
 	}
 }
 
-func hashStringList(list []string) string {
-	// Sort to ensure deterministic order
-	sort.Strings(list)
-	concat := strings.Join(list, ",")
-
-	h := fnv.New32a() // 32-bit FNV-1a hash
-	h.Write([]byte(concat))
-	return fmt.Sprintf("%x", h.Sum32())
-}
-
 // getPodName generates a deterministic pod name for ephemeral pull
-func (p *EphemeralPuller) getPodName(nodeName string, srcPodName string, images []string) string {
-	return fmt.Sprintf("pull-%s-%s-%s", nodeName, srcPodName, hashStringList(images))
+func (p *EphemeralPuller) getPodName(nodeName string, srcPodName string) string {
+	combined := fmt.Sprintf("%s:%s", nodeName, srcPodName)
+	h := fnv.New64a()
+	h.Write([]byte(combined))
+	hash := fmt.Sprintf("%016x", h.Sum64())
+	return fmt.Sprintf("pull-%s", hash)
 }
 
 // helper functions

@@ -130,14 +130,16 @@ func (r *ContainerCheckpointReconciler) handleCheckpointingPhase(ctx context.Con
 	}
 
 	// Content exists, check for error annotation
-	if errMsg, hasError := containerCheckpointContent.Annotations["error"]; hasError {
-		logger.Info("Checkpoint failed", "error", errMsg)
-		now := metav1.Now()
-		containerCheckpoint.Status.Phase = lpmv1.ContainerCheckpointPhaseFailed
-		containerCheckpoint.Status.Message = "checkpointing failed: " + errMsg
-		containerCheckpoint.Status.Ready = false
-		containerCheckpoint.Status.CompletionTime = &now
-		return ctrl.Result{}, r.Status().Update(ctx, containerCheckpoint)
+	if containerCheckpointContent.Annotations != nil {
+		if errMsg, hasError := containerCheckpointContent.Annotations["error"]; hasError {
+			logger.Info("Checkpoint failed", "error", errMsg)
+			now := metav1.Now()
+			containerCheckpoint.Status.Phase = lpmv1.ContainerCheckpointPhaseFailed
+			containerCheckpoint.Status.Message = "checkpointing failed: " + errMsg
+			containerCheckpoint.Status.Ready = false
+			containerCheckpoint.Status.CompletionTime = &now
+			return ctrl.Result{}, r.Status().Update(ctx, containerCheckpoint)
+		}
 	}
 
 	// Track checkpoint success
