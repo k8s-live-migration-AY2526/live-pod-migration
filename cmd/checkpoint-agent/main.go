@@ -425,7 +425,9 @@ func main() {
 		WithEventFilter(predicate.NewPredicateFuncs(func(object client.Object) bool {
 			// Only process checkpoints for pods on this node
 			checkpoint := object.(*lpmv1.ContainerCheckpoint)
-			return reconciler.isForThisNode(context.Background(), checkpoint)
+			ctx, cancel := context.WithTimeout(context.Background(), checkpointTimeout)
+			defer cancel()
+			return reconciler.isForThisNode(ctx, checkpoint)
 		})).
 		Complete(reconciler); err != nil {
 		logger.Error(err, "Failed to create controller")
@@ -459,6 +461,12 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+
+	// Wait for manager cache sync
+	if ok := mgr.GetCache().WaitForCacheSync(ctx); !ok {
+		logger.Error(fmt.Errorf("cache sync failed"), "Failed to sync manager cache")
+		os.Exit(1)
+	}
 
 	// Create gRPC server
 	lis, err := net.Listen("tcp", port)
@@ -562,7 +570,11 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// Perform checkpoint operation
 	artifactURI, err := r.performCheckpoint(ctx, pod, checkpoint.Spec.ContainerName)
 	if err != nil {
-		logger.Error(err, "Failed to perform checkpoint")
+		logger.Error(err, "Failed to perform checkpoint",
+			"pod", checkpoint.Spec.PodName,
+			"container", checkpoint.Spec.ContainerName,
+		)
+
 		// Create content with error status to signal failure
 		containerCheckpointContent = &lpmv1.ContainerCheckpointContent{
 			ObjectMeta: metav1.ObjectMeta{
@@ -582,7 +594,11 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 				ArtifactURI:   "", // Empty on error
 			},
 		}
-		return ctrl.Result{}, r.Create(ctx, containerCheckpointContent)
+		if createErr := r.Create(ctx, containerCheckpointContent); createErr != nil {
+			logger.Error(createErr, "Failed to create ContainerCheckpointContent after checkpoint error")
+			return ctrl.Result{}, fmt.Errorf("checkpoint failed: %v, create ContainerCheckpointContent failed: %v", err, createErr)
+		}
+		return ctrl.Result{}, err
 	}
 
 	// Create ContainerCheckpointContent with success
@@ -614,6 +630,10 @@ func (r *CheckpointReconciler) isForThisNode(ctx context.Context, checkpoint *lp
 	}, pod)
 
 	if err != nil {
+		logger := log.FromContext(ctx)
+		logger.Error(err, "Failed to get pod for ContainerCheckpoint",
+			"namespace", checkpoint.Namespace,
+			"pod", checkpoint.Spec.PodName)
 		return false
 	}
 	return pod.Spec.NodeName == r.NodeName
