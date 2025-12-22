@@ -533,7 +533,7 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		"container", checkpoint.Spec.ContainerName,
 		"phase", checkpoint.Status.Phase)
 
-	// Only process if Running phase (main controller sets this)
+	// Only process if Running phase (ContainerCheckpointController sets this)
 	if checkpoint.Status.Phase != lpmv1.ContainerCheckpointPhaseRunning {
 		return ctrl.Result{}, nil
 	}
@@ -543,7 +543,6 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	containerCheckpointContent := &lpmv1.ContainerCheckpointContent{}
 	err := r.Get(ctx, client.ObjectKey{Name: contentName}, containerCheckpointContent)
 	if err == nil {
-		// Content already exists, nothing to do
 		logger.Info("ContainerCheckpointContent already exists", "name", contentName)
 		return ctrl.Result{}, nil
 	}
@@ -551,7 +550,6 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Get pod to extract UID
 	pod := &corev1.Pod{}
 	if err := r.Get(ctx, client.ObjectKey{
 		Namespace: checkpoint.Namespace,
@@ -561,7 +559,6 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Ensure checkpoint directory exists
 	if err := os.MkdirAll(checkpointDir, 0755); err != nil {
 		logger.Error(err, "Failed to create checkpoint directory")
 		return ctrl.Result{}, err
@@ -601,7 +598,6 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	// Create ContainerCheckpointContent with success
 	containerCheckpointContent = &lpmv1.ContainerCheckpointContent{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: contentName,
