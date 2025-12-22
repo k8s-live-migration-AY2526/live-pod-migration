@@ -115,14 +115,13 @@ func (r *ContainerCheckpointReconciler) handlePendingPhase(ctx context.Context, 
 func (r *ContainerCheckpointReconciler) handleCheckpointingPhase(ctx context.Context, containerCheckpoint *lpmv1.ContainerCheckpoint) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Check if ContainerCheckpointContent exists (created by agent asynchronously)
+	// Check if ContainerCheckpointContent exists (created by checkpoint agent asynchronously)
 	contentName := containerCheckpoint.Name
 	containerCheckpointContent := &lpmv1.ContainerCheckpointContent{}
 	err := r.Get(ctx, client.ObjectKey{Name: contentName}, containerCheckpointContent)
 
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			// Content not created yet by agent, keep waiting
 			logger.Info("Waiting for ContainerCheckpointContent to be created", "name", contentName)
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 		}
