@@ -24,11 +24,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -396,16 +394,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create manager with field selector to only watch pods on this node
+	// Create manager
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
-		Scheme: scheme,
-		Cache: cache.Options{
-			ByObject: map[client.Object]cache.ByObject{
-				&corev1.Pod{}: {
-					Field: fields.SelectorFromSet(fields.Set{"spec.nodeName": nodeName}),
-				},
-			},
-		},
+		Scheme:                 scheme,
 		HealthProbeBindAddress: ":8081",
 	})
 	if err != nil {
@@ -423,11 +414,8 @@ func main() {
 	if err := ctrl.NewControllerManagedBy(mgr).
 		For(&lpmv1.ContainerCheckpoint{}).
 		WithEventFilter(predicate.NewPredicateFuncs(func(object client.Object) bool {
-			// Only process checkpoints for pods on this node
 			checkpoint := object.(*lpmv1.ContainerCheckpoint)
-			ctx, cancel := context.WithTimeout(context.Background(), checkpointTimeout)
-			defer cancel()
-			return reconciler.isForThisNode(ctx, checkpoint)
+			return checkpoint.Status.Phase == lpmv1.ContainerCheckpointPhaseRunning
 		})).
 		Complete(reconciler); err != nil {
 		logger.Error(err, "Failed to create controller")
@@ -526,22 +514,30 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	logger.Info("Detected ContainerCheckpoint CR",
+	// Get pod and check if deployed on this node. If yes, responsible for checkpointing.
+	pod := &corev1.Pod{}
+	err := r.Get(ctx, client.ObjectKey{Namespace: checkpoint.Namespace, Name: checkpoint.Spec.PodName}, pod)
+	if err != nil {
+		logger.Error(err, "Failed to get pod")
+		return ctrl.Result{}, err
+	}
+
+	// Not for this node, skip
+	if pod.Spec.NodeName != r.NodeName {
+		return ctrl.Result{}, nil
+	}
+
+	logger.Info("Detected ContainerCheckpoint CR for checkpointing",
 		"namespace", checkpoint.Namespace,
 		"name", checkpoint.Name,
 		"pod", checkpoint.Spec.PodName,
 		"container", checkpoint.Spec.ContainerName,
 		"phase", checkpoint.Status.Phase)
 
-	// Only process if Running phase (ContainerCheckpointController sets this)
-	if checkpoint.Status.Phase != lpmv1.ContainerCheckpointPhaseRunning {
-		return ctrl.Result{}, nil
-	}
-
 	// Check if content already exists (idempotency)
 	contentName := checkpoint.Name
 	containerCheckpointContent := &lpmv1.ContainerCheckpointContent{}
-	err := r.Get(ctx, client.ObjectKey{Name: contentName}, containerCheckpointContent)
+	err = r.Get(ctx, client.ObjectKey{Name: contentName}, containerCheckpointContent)
 	if err == nil {
 		logger.Info("ContainerCheckpointContent already exists", "name", contentName)
 		return ctrl.Result{}, nil
@@ -550,15 +546,7 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	pod := &corev1.Pod{}
-	if err := r.Get(ctx, client.ObjectKey{
-		Namespace: checkpoint.Namespace,
-		Name:      checkpoint.Spec.PodName,
-	}, pod); err != nil {
-		logger.Error(err, "Failed to get pod")
-		return ctrl.Result{}, err
-	}
-
+	// Ensure checkpoint directory exists
 	if err := os.MkdirAll(checkpointDir, 0755); err != nil {
 		logger.Error(err, "Failed to create checkpoint directory")
 		return ctrl.Result{}, err
@@ -616,23 +604,6 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	logger.Info("Creating ContainerCheckpointContent", "name", contentName, "artifactURI", artifactURI)
 	return ctrl.Result{}, r.Create(ctx, containerCheckpointContent)
-}
-
-func (r *CheckpointReconciler) isForThisNode(ctx context.Context, checkpoint *lpmv1.ContainerCheckpoint) bool {
-	pod := &corev1.Pod{}
-	err := r.Get(ctx, client.ObjectKey{
-		Namespace: checkpoint.Namespace,
-		Name:      checkpoint.Spec.PodName,
-	}, pod)
-
-	if err != nil {
-		logger := log.FromContext(ctx)
-		logger.Error(err, "Failed to get pod for ContainerCheckpoint",
-			"namespace", checkpoint.Namespace,
-			"pod", checkpoint.Spec.PodName)
-		return false
-	}
-	return pod.Spec.NodeName == r.NodeName
 }
 
 // performCheckpoint executes the checkpoint operation via kubelet API
