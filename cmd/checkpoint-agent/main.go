@@ -427,7 +427,7 @@ func main() {
 		For(&lpmv1.PodRestore{}).
 		WithEventFilter(predicate.NewPredicateFuncs(func(object client.Object) bool {
 			checkpoint := object.(*lpmv1.PodRestore)
-			return checkpoint.Status.Phase == lpmv1.PodRestorePhaseRestoring
+			return checkpoint.Status.Phase == lpmv1.PodRestorePhasePreparing
 		})).
 		Complete(podRestoreReconciler); err != nil {
 		logger.Error(err, "Failed to create PodRestore controller")
@@ -863,7 +863,187 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		"name", podRestore.Name,
 	)
 
+	// Fetch PodCheckpointContent
+	var cpc lpmv1.PodCheckpointContent
+	err := r.Get(ctx, client.ObjectKey{
+		Namespace: podRestore.Namespace,
+		Name:      podRestore.Spec.PodCheckpointContentRef.Name,
+	}, &cpc)
+	if err != nil {
+		logger.Error(err, "Failed to get PodCheckpointContent", "name", podRestore.Spec.PodCheckpointContentRef.Name)
+		return ctrl.Result{}, r.updatePhase(ctx, &podRestore, lpmv1.PodRestorePhaseFailed, fmt.Sprintf("failed to get PodCheckpointContent: %v", err))
+	}
+
+	// Ensure spec.podSnapshot exists
+	if cpc.Spec.PodSnapshot == nil {
+		logger.Error(fmt.Errorf("podSnapshot is nil"), "PodSnapshot is required in PodCheckpointContent")
+		return ctrl.Result{}, r.updatePhase(ctx, &podRestore, lpmv1.PodRestorePhaseFailed, "podSnapshot is required in PodCheckpointContent")
+	}
+
+	// Initialize imageMapping in status if nil
+	if podRestore.Status.ImageMapping == nil {
+		podRestore.Status.ImageMapping = map[string]string{}
+	}
+
+	var podSnapshot corev1.Pod
+	if err := json.Unmarshal(cpc.Spec.PodSnapshot.Raw, &podSnapshot); err != nil {
+		return ctrl.Result{}, r.updatePhase(ctx, &podRestore, lpmv1.PodRestorePhaseFailed, fmt.Sprintf("failed to parse podSnapshot: %v", err))
+	}
+
+	logger.Info("Preparing images for pod restoration", "pod", podSnapshot.Name)
+
+	// Iterate containers from podSnapshot
+	imagesReady := true
+	for _, c := range podSnapshot.Spec.Containers {
+		logger.Info("Processing container", "container", c.Name)
+
+		// skip if already resolved
+		if _, ok := podRestore.Status.ImageMapping[c.Name]; ok {
+			logger.Info("Image already prepared for container", "container", c.Name)
+			continue
+		}
+
+		// find checkpoint artifact for this container
+		checkpointURI := r.getCheckpointPathForContainer(ctx, &cpc, c.Name)
+		if checkpointURI == "" {
+			// if not found, fail early
+			imagesReady = false
+			logger.Info("No checkpoint found for container", "container", c.Name)
+			break
+		}
+
+		imageRef, err := r.convertCheckpointToOCI(ctx, checkpointURI, c.Name)
+		if err != nil {
+			// conversion failed; mark not ready and retry later
+			imagesReady = false
+			logger.Error(err, "Failed to convert checkpoint to OCI image", "container", c.Name, "checkpointURI", checkpointURI)
+			continue
+		}
+
+		// store mapping
+		podRestore.Status.ImageMapping[c.Name] = imageRef
+		logger.Info("Prepared image for container", "container", c.Name, "image", imageRef)
+	}
+
+	if !imagesReady {
+		logger.Info("Not all images are ready yet for pod, requeueing", "pod", podSnapshot.Name)
+		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+	}
+
+	// Persist image mappings
+	if err := r.Status().Update(ctx, &podRestore); err != nil {
+		logger.Error(err, "Failed to update PodRestore status after image preparation")
+		return ctrl.Result{}, err
+	}
+
+	// Let main controller update phase to PodRestorePhaseRestoring
 	return ctrl.Result{}, nil
+}
+
+func (r *PodRestoreReconciler) updatePhase(ctx context.Context, podRestore *lpmv1.PodRestore, phase lpmv1.PodRestorePhase, message string) error {
+	podRestore.Status.Phase = phase
+	podRestore.Status.Message = message
+	// mark completion time on terminal phases
+	if phase == "Succeeded" || phase == "Failed" {
+		now := metav1.Now()
+		podRestore.Status.CompletionTime = &now
+	}
+	return r.Status().Update(ctx, podRestore)
+}
+
+// getCheckpointPathForContainer locates the artifactURI inside PodCheckpointContent for a container name
+func (r *PodRestoreReconciler) getCheckpointPathForContainer(ctx context.Context, checkpointContent *lpmv1.PodCheckpointContent, containerName string) string {
+	for _, containerContent := range checkpointContent.Spec.ContainerContents {
+		var content lpmv1.ContainerCheckpointContent
+		err := r.Get(ctx, client.ObjectKey{
+			Name:      containerContent.Name,
+			Namespace: checkpointContent.Namespace,
+		}, &content)
+		if err != nil {
+			// skip missing content; caller will handle not-found case
+			continue
+		}
+
+		// simple heuristic: content name contains container name OR match by ContainerName field
+		if strings.Contains(content.Name, containerName) || content.Spec.ContainerName == containerName {
+			return content.Spec.ArtifactURI
+		}
+	}
+	return ""
+}
+
+func (r *PodRestoreReconciler) convertCheckpointName(checkpointURI string) (string, string, error) {
+	if !strings.HasPrefix(checkpointURI, "shared://") {
+		return "", "", fmt.Errorf("Expected shared:// URI prefix, got: %s", checkpointURI)
+	}
+
+	// Generate OCI image name
+	filename := strings.TrimPrefix(checkpointURI, "shared://")
+	imageName := fmt.Sprintf("localhost/checkpoint:%s", strings.TrimSuffix(filename, ".tar"))
+	checkpointURI = filepath.Join(checkpointsMountPath, filename)
+	return checkpointURI, imageName, nil
+}
+
+// convertCheckpointToOCI converts a checkpoint tar file to OCI image format using buildah
+func (r *PodRestoreReconciler) convertCheckpointToOCI(ctx context.Context, checkpointURI, containerName string) (string, error) {
+	checkpointURI, imageName, err := r.convertCheckpointName(checkpointURI)
+	if err != nil {
+		return "", err
+	}
+
+	// Verify checkpoint file exists
+	if _, err := os.Stat(checkpointURI); os.IsNotExist(err) {
+		return "", fmt.Errorf("checkpoint file not found: %s", checkpointURI)
+	}
+
+	logger := log.FromContext(ctx)
+	logger.Info("Converting checkpoint to OCI image", "checkpointURI", checkpointURI, "imageName", imageName)
+
+	// Common buildah flags to use the mounted container storage
+	buildahFlags := []string{"--root", "/var/lib/containers/storage"}
+
+	// Create a working container from scratch
+	cmd := exec.Command("buildah", append(buildahFlags, "from", "scratch")...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("failed to create working container: %v, output: %s", err, output)
+	}
+
+	containerID := strings.TrimSpace(string(output))
+	logger.Info("Created working container", "containerID", containerID)
+
+	// Clean up working container on exit
+	defer func() {
+		cmd := exec.Command("buildah", append(buildahFlags, "rm", containerID)...)
+		if err := cmd.Run(); err != nil {
+			logger.Info("Warning: failed to remove working container",
+				"containerID", containerID,
+				"error", err)
+		}
+	}()
+
+	// Add checkpoint file to container
+	cmd = exec.Command("buildah", append(buildahFlags, "add", containerID, checkpointURI, "/")...)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to add checkpoint to container: %v", err)
+	}
+
+	// Add checkpoint annotation
+	cmd = exec.Command("buildah", append(buildahFlags, "config",
+		fmt.Sprintf("--annotation=io.kubernetes.cri-o.annotations.checkpoint.name=%s", containerName),
+		containerID)...)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to add checkpoint annotation: %v", err)
+	}
+
+	// Commit the container as an image
+	cmd = exec.Command("buildah", append(buildahFlags, "commit", containerID, imageName)...)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to commit container as image: %v", err)
+	}
+
+	logger.Info("Successfully created OCI image", "imageName", imageName)
+	return imageName, nil
 }
 
 // convertCheckpointToOCI converts a checkpoint tar file to OCI image format using buildah
