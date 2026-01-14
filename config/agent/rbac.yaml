@@ -12,13 +12,16 @@ rules:
   resources: ["nodes"]
   verbs: ["get", "list", "watch"]
 - apiGroups: ["lpm.my.domain"]
-  resources: ["containercheckpoints"]
+  resources: ["containercheckpoints", "podrestores"]
   verbs: ["get", "list", "watch"]
 - apiGroups: ["lpm.my.domain"]
-  resources: ["containercheckpointcontents"]
+  resources: ["containercheckpointcontents", "podcheckpointcontents"]
   verbs: ["get", "list", "watch", "create"]
 - apiGroups: ["lpm.my.domain"]
   resources: ["containercheckpoints/status"]
+  verbs: ["update"]
+- apiGroups: ["lpm.my.domain"]
+  resources: ["podrestores/status"]
   verbs: ["update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

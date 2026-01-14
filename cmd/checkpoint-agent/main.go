@@ -377,12 +377,6 @@ func main() {
 	}
 	logger.Info("Starting checkpoint agent on node " + nodeName)
 
-	// Ensure checkpoint directory exists
-	if err := os.MkdirAll(checkpointDir, 0755); err != nil {
-		logger.Error(err, "Failed to create checkpoint directory")
-		os.Exit(1)
-	}
-
 	// Build scheme
 	scheme := runtime.NewScheme()
 	if err := lpmv1.AddToScheme(scheme); err != nil {
@@ -404,7 +398,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Setup reconciler
+	// Setup Checkpoint reconciler
 	reconciler := &CheckpointReconciler{
 		Client:   mgr.GetClient(),
 		NodeName: nodeName,
@@ -419,6 +413,24 @@ func main() {
 		})).
 		Complete(reconciler); err != nil {
 		logger.Error(err, "Failed to create controller")
+		os.Exit(1)
+	}
+
+	// Setup PodRestore reconciler
+	podRestoreReconciler := &PodRestoreReconciler{
+		Client:   mgr.GetClient(),
+		NodeName: nodeName,
+	}
+
+	// Watch PodRestore resources
+	if err := ctrl.NewControllerManagedBy(mgr).
+		For(&lpmv1.PodRestore{}).
+		WithEventFilter(predicate.NewPredicateFuncs(func(object client.Object) bool {
+			checkpoint := object.(*lpmv1.PodRestore)
+			return checkpoint.Status.Phase == lpmv1.PodRestorePhaseRestoring
+		})).
+		Complete(podRestoreReconciler); err != nil {
+		logger.Error(err, "Failed to create PodRestore controller")
 		os.Exit(1)
 	}
 
@@ -824,6 +836,34 @@ func (r *CheckpointReconciler) copyToSharedStorage(podUID, containerName, localP
 
 	// Return relative path for shared:// URI
 	return filename, destFile.Sync()
+}
+
+// PodRestoreReconciler handles PodRestore events
+type PodRestoreReconciler struct {
+	client.Client
+	NodeName string
+}
+
+// Reconcile processes PodRestore events
+func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+
+	var podRestore lpmv1.PodRestore
+	if err := r.Get(ctx, req.NamespacedName, &podRestore); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Not for this node, skip
+	if podRestore.Spec.TargetNode != r.NodeName {
+		return ctrl.Result{}, nil
+	}
+
+	logger.Info("Detected PodRestore CR for restoration",
+		"namespace", podRestore.Namespace,
+		"name", podRestore.Name,
+	)
+
+	return ctrl.Result{}, nil
 }
 
 // convertCheckpointToOCI converts a checkpoint tar file to OCI image format using buildah
