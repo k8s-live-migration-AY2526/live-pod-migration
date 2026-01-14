@@ -132,6 +132,8 @@ func (r *PodRestoreReconciler) handlePending(ctx context.Context, podRestore *lp
 	return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 }
 
+// Node-level agent handles image preparation for containers on the target node
+// We monitor when all images are ready, then transition to Restoring phase
 func (r *PodRestoreReconciler) handlePreparingImages(ctx context.Context, podRestore *lpmv1.PodRestore) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 	logger.Info("Preparing images for PodRestore", "name", podRestore.Name)
@@ -147,64 +149,40 @@ func (r *PodRestoreReconciler) handlePreparingImages(ctx context.Context, podRes
 		return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, "podSpecSnapshot not found in PodCheckpointContent")
 	}
 
-	// Initialize imageMapping in status if nil
-	if podRestore.Status.ImageMapping == nil {
-		podRestore.Status.ImageMapping = map[string]string{}
-	}
-
-	imagesReady := true
-
+	// Parse pod snapshot to determine expected container count
 	var podSnapshot corev1.Pod
 	if err := json.Unmarshal(cpc.Spec.PodSnapshot.Raw, &podSnapshot); err != nil {
 		return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, fmt.Sprintf("failed to parse podSnapshot: %v", err))
 	}
 
-	// Iterate containers from podSnapshot
-	for _, c := range podSnapshot.Spec.Containers {
-		// skip if already resolved
-		if _, ok := podRestore.Status.ImageMapping[c.Name]; ok {
-			continue
-		}
-
-		// find checkpoint artifact for this container
-		checkpointURI := r.getCheckpointPathForContainer(ctx, &cpc, c.Name)
-		if checkpointURI == "" {
-			// if not found, fail early
-			imagesReady = false
-			logger.Info("No checkpoint found for container", "container", c.Name)
-			continue
-		}
-
-		imageRef, err := r.convertToOCIImage(ctx, checkpointURI, c.Name, podRestore.Spec.TargetNode)
-		if err != nil {
-			// conversion failed; mark not ready and retry later
-			imagesReady = false
-			logger.Error(err, "Failed to convert checkpoint to OCI image", "container", c.Name, "checkpointURI", checkpointURI)
-			continue
-		}
-
-		// store mapping
-		podRestore.Status.ImageMapping[c.Name] = imageRef
-		logger.Info("Prepared image for container", "container", c.Name, "image", imageRef)
+	// Check if all containers have their images prepared
+	expectedContainers := len(podSnapshot.Spec.Containers)
+	if podRestore.Status.ImageMapping == nil {
+		podRestore.Status.ImageMapping = make(map[string]string)
 	}
+	preparedContainers := len(podRestore.Status.ImageMapping)
 
-	// persist status again once done/partially done
-	if err := r.Status().Update(ctx, podRestore); err != nil {
-		return ctrl.Result{}, err
+	logger.Info("Image preparation progress",
+		"prepared", preparedContainers,
+		"expected", expectedContainers,
+		"mapping", podRestore.Status.ImageMapping)
+
+	// Validate that each container has a non-empty image reference
+	for _, container := range podSnapshot.Spec.Containers {
+		imageRef, exists := podRestore.Status.ImageMapping[container.Name]
+		if !exists || imageRef == "" {
+			return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+		}
 	}
 
 	// move to restoring only when all containers have images mapped
-	if imagesReady && len(podRestore.Status.ImageMapping) == len(podSnapshot.Spec.Containers) {
-		podRestore.Status.Phase = lpmv1.PodRestorePhaseRestoring
-		podRestore.Status.Message = "creating restored pod"
-		if err := r.Status().Update(ctx, podRestore); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
-	}
+	podRestore.Status.Phase = lpmv1.PodRestorePhaseRestoring
+	podRestore.Status.Message = "creating restored pod"
+	if err := r.Status().Update(ctx, podRestore); err != nil {
+		return ctrl.Result{}, err
 
-	// still preparing images; requeue
-	return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+	}
+	return ctrl.Result{}, nil
 }
 
 func (r *PodRestoreReconciler) handleRestoring(ctx context.Context, podRestore *lpmv1.PodRestore) (ctrl.Result, error) {
