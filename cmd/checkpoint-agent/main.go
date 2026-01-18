@@ -56,6 +56,12 @@ func main() {
 	}
 	logger.Info("Starting checkpoint agent on node " + nodeName)
 
+	// Ensure checkpoint directory exists
+	if err := os.MkdirAll(checkpointDir, 0755); err != nil {
+		logger.Error(err, "Failed to create checkpoint directory")
+		os.Exit(1)
+	}
+
 	// Build scheme
 	scheme := runtime.NewScheme()
 	if err := lpmv1.AddToScheme(scheme); err != nil {
@@ -197,12 +203,6 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, nil
 	}
 	if !apierrors.IsNotFound(err) {
-		return ctrl.Result{}, err
-	}
-
-	// Ensure checkpoint directory exists
-	if err := os.MkdirAll(checkpointDir, 0755); err != nil {
-		logger.Error(err, "Failed to create checkpoint directory")
 		return ctrl.Result{}, err
 	}
 
