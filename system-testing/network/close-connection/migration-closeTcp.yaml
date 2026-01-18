@@ -1,0 +1,9 @@
+apiVersion: lpm.my.domain/v1
+kind: PodMigration
+metadata:
+  name: redis-server-migration-close-tcp
+  namespace: default
+spec:
+  podName: redis-server
+  targetNode: k8s-worker2
+  closeTcp: true

@@ -125,19 +125,37 @@ vagrant destroy -f
 
 This setup provides a clean, minimal Kubernetes environment perfect for testing the live pod migration system without the complexity of custom builds.
 
+## Building Runc
+```bash
+cd dependencies/runc
+make # produces runc in the current directory
+
+# Copy binary to workers
+scp ./runc vagrant@192.168.56.11:~/
+scp ./runc vagrant@192.168.56.12:~/
+
+# Deploy in workers
+sudo cp ~/runc /usr/sbin/runc
+
+# Restart crio
+sudo systemctl daemon-reload
+sudo systemctl restart crio
+sudo systemctl status crio
+```
+
 ## Building and Deploying Kubelet and CRIO
 ```bash
 sudo apt install -y libgpgme-dev # Required for building
 
 # To build kubelet (in VM)
-cd kubernetes
+cd dependencies/kubernetes
 make all WHAT=cmd/kubelet
 mv _output/bin/kubelet ~
 scp ~/kubelet vagrant@192.168.56.11:~/ # copy binary to worker and worker
 scp ~/kubelet vagrant@192.168.56.12:~/ # copy binary to worker and worker2
 
 # To build crio (in VM)
-cd cri-o
+cd dependencies/cri-o
 PATH=/home/vagrant/.go/bin:$PATH make # Override the go path to use 1.22.2
 mv bin/crio ~
 scp ~/crio vagrant@192.168.56.11:~/ # copy binary to worker and worker

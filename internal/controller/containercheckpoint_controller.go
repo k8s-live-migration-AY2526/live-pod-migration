@@ -213,6 +213,7 @@ func (r *ContainerCheckpointReconciler) performContainerCheckpoint(ctx context.C
 		containerCheckpoint.Spec.ContainerName,
 		string(pod.UID),
 		containerCheckpoint.Spec.DeferTermination,
+		containerCheckpoint.Spec.CloseTcp,
 	)
 }
 

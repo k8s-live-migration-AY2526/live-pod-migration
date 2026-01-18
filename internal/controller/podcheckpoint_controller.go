@@ -115,6 +115,7 @@ func (r *PodCheckpointReconciler) handlePendingPhase(ctx context.Context, podChe
 					PodName:          *podCheckpoint.Spec.PodName,
 					ContainerName:    container.Name,
 					DeferTermination: podCheckpoint.Spec.DeferTermination,
+					CloseTcp:         podCheckpoint.Spec.CloseTcp,
 				},
 			}
 			if err := r.Create(ctx, &containerCheckpoint); err != nil {

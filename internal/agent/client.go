@@ -30,7 +30,7 @@ func NewClient(k8sClient client.Client) *Client {
 }
 
 // CheckpointContainer performs a checkpoint operation on a container
-func (c *Client) CheckpointContainer(ctx context.Context, nodeName, podNamespace, podName, containerName, podUID string, deferTermination bool) (string, error) {
+func (c *Client) CheckpointContainer(ctx context.Context, nodeName, podNamespace, podName, containerName, podUID string, deferTermination bool, closeTcp bool) (string, error) {
 	// Create gRPC connection to agent
 	conn, err := c.dialAgent(ctx, nodeName)
 	if err != nil {
@@ -52,6 +52,7 @@ func (c *Client) CheckpointContainer(ctx context.Context, nodeName, podNamespace
 		ContainerName:    containerName,
 		PodUid:           podUID,
 		DeferTermination: deferTermination,
+		CloseTcp:         closeTcp,
 	}
 
 	resp, err := checkpointClient.Checkpoint(ctx, req)
