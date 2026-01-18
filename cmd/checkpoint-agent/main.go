@@ -426,8 +426,9 @@ func main() {
 	if err := ctrl.NewControllerManagedBy(mgr).
 		For(&lpmv1.PodRestore{}).
 		WithEventFilter(predicate.NewPredicateFuncs(func(object client.Object) bool {
-			checkpoint := object.(*lpmv1.PodRestore)
-			return checkpoint.Status.Phase == lpmv1.PodRestorePhasePreparing
+			podRestore := object.(*lpmv1.PodRestore)
+			return podRestore.Status.Phase == lpmv1.PodRestorePhasePreparing &&
+				podRestore.Spec.TargetNode == nodeName
 		})).
 		Complete(podRestoreReconciler); err != nil {
 		logger.Error(err, "Failed to create PodRestore controller")
@@ -858,6 +859,16 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, nil
 	}
 
+	// Only process if in Preparing phase (guards against retries after phase transition)
+	if podRestore.Status.Phase != lpmv1.PodRestorePhasePreparing {
+		logger.Info("Skipping PodRestore - not in Preparing phase",
+			"namespace", podRestore.Namespace,
+			"name", podRestore.Name,
+			"phase", podRestore.Status.Phase,
+		)
+		return ctrl.Result{}, nil
+	}
+
 	logger.Info("Detected PodRestore CR for restoration",
 		"namespace", podRestore.Namespace,
 		"name", podRestore.Name,
@@ -894,6 +905,7 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Iterate containers from podSnapshot
 	imagesReady := true
+	statusChanged := false
 	for _, c := range podSnapshot.Spec.Containers {
 		logger.Info("Processing container", "container", c.Name)
 
@@ -922,6 +934,7 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 		// store mapping
 		podRestore.Status.ImageMapping[c.Name] = imageRef
+		statusChanged = true
 		logger.Info("Prepared image for container", "container", c.Name, "image", imageRef)
 	}
 
@@ -930,13 +943,18 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 	}
 
-	// Persist image mappings
-	if err := r.Status().Update(ctx, &podRestore); err != nil {
-		logger.Error(err, "Failed to update PodRestore status after image preparation")
-		return ctrl.Result{}, err
+	// Only update status if we actually made changes
+	if statusChanged {
+		if err := r.Status().Update(ctx, &podRestore); err != nil {
+			logger.Error(err, "Failed to update PodRestore status after image preparation")
+			// Return with requeue to retry on conflict
+			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+		}
+		logger.Info("Updated PodRestore status with new image mappings", "pod", podSnapshot.Name)
 	}
 
 	// Let main controller update phase to PodRestorePhaseRestoring
+	logger.Info("All images prepared for pod restoration", "pod", podSnapshot.Name)
 	return ctrl.Result{}, nil
 }
 
