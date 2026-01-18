@@ -33,14 +33,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	lpmv1 "my.domain/guestbook/api/v1"
-	"my.domain/guestbook/internal/agent"
 )
 
 // PodRestoreReconciler reconciles a PodRestore object
 type PodRestoreReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	AgentClient *agent.Client
+	Scheme *runtime.Scheme
 }
 
 // RBAC
@@ -54,9 +52,8 @@ type PodRestoreReconciler struct {
 
 func NewPodRestoreReconciler(c client.Client, scheme *runtime.Scheme) *PodRestoreReconciler {
 	return &PodRestoreReconciler{
-		Client:      c,
-		Scheme:      scheme,
-		AgentClient: agent.NewClient(c),
+		Client: c,
+		Scheme: scheme,
 	}
 }
 
@@ -458,25 +455,6 @@ func (r *PodRestoreReconciler) handleCompleted(ctx context.Context, podRestore *
 	}
 
 	return ctrl.Result{}, nil
-}
-
-// helper to convert shared:// checkpoint URI to OCI image via agent
-func (r *PodRestoreReconciler) convertToOCIImage(ctx context.Context, checkpointURI, containerName, targetNode string) (string, error) {
-	if !strings.HasPrefix(checkpointURI, "shared://") {
-		return checkpointURI, nil
-	}
-
-	// Generate OCI image name
-	filename := strings.TrimPrefix(checkpointURI, "shared://")
-	imageName := fmt.Sprintf("localhost/checkpoint:%s", strings.TrimSuffix(filename, ".tar"))
-
-	// Use agent to convert checkpoint to OCI image
-	imageRef, err := r.AgentClient.ConvertCheckpointToImage(ctx, targetNode, checkpointURI, containerName, imageName)
-	if err != nil {
-		return "", fmt.Errorf("failed to convert checkpoint to OCI image: %w", err)
-	}
-
-	return imageRef, nil
 }
 
 // helper to construct restored pod using podSnapshot and imageMapping
