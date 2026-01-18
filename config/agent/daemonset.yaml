@@ -57,18 +57,19 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
           ports:
-            - name: grpc
-              containerPort: 50051
-              hostPort: 50051
+            - name: health
+              containerPort: 8081
               protocol: TCP
           livenessProbe:
-            grpc:
-              port: 50051
+            httpGet:
+              path: /healthz
+              port: 8081
             initialDelaySeconds: 10
             periodSeconds: 30
           readinessProbe:
-            grpc:
-              port: 50051
+            httpGet:
+              path: /readyz
+              port: 8081
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:

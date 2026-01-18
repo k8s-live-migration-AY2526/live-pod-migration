@@ -38,7 +38,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	lpmv1 "my.domain/guestbook/api/v1"
-	"my.domain/guestbook/internal/agent"
 	"my.domain/guestbook/internal/controller"
 	// +kubebuilder:scaffold:imports
 )
@@ -221,7 +220,6 @@ func main() {
 	if err = (&controller.ContainerCheckpointReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
-		Agent:  *agent.NewClient(mgr.GetClient()),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ContainerCheckpoint")
 		os.Exit(1)
