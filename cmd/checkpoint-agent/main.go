@@ -207,7 +207,7 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// Perform checkpoint operation
-	artifactURI, err := r.performCheckpoint(ctx, pod, checkpoint.Spec.ContainerName)
+	artifactURI, err := r.performCheckpoint(ctx, pod, checkpoint.Spec.ContainerName, checkpoint.Spec.DeferTermination)
 	if err != nil {
 		logger.Error(err, "Failed to perform checkpoint",
 			"pod", checkpoint.Spec.PodName,
@@ -261,10 +261,10 @@ func (r *CheckpointReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 // performCheckpoint executes the checkpoint operation via kubelet API
-func (r *CheckpointReconciler) performCheckpoint(ctx context.Context, pod *corev1.Pod, containerName string) (string, error) {
+func (r *CheckpointReconciler) performCheckpoint(ctx context.Context, pod *corev1.Pod, containerName string, deferTermination bool) (string, error) {
 	// Create checkpoint using kubelet API
-	url := fmt.Sprintf("https://%s:10250/checkpoint/%s/%s/%s",
-		r.NodeName, pod.Namespace, pod.Name, containerName)
+	url := fmt.Sprintf("https://%s:10250/checkpoint/%s/%s/%s?leaveStopped=%t",
+		r.NodeName, pod.Namespace, pod.Name, containerName, !deferTermination)
 
 	httpClient, err := r.makeTLSClient(ctx)
 	if err != nil {
