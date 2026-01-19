@@ -22,6 +22,7 @@ message CheckpointRequest {
   string pod_name = 2;
   string container_name = 3;
   string pod_uid = 4;
+  bool defer_termination = 5;
 }
 
 // CheckpointResponse contains the result of a checkpoint operation
