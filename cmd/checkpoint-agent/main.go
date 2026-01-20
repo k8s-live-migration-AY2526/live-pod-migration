@@ -97,7 +97,7 @@ func main() {
 			return checkpoint.Status.Phase == lpmv1.ContainerCheckpointPhaseRunning
 		})).
 		Complete(reconciler); err != nil {
-		logger.Error(err, "Failed to create controller")
+		logger.Error(err, "Failed to create ContainerCheckpoint controller")
 		os.Exit(1)
 	}
 
@@ -495,21 +495,6 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// Not for this node, skip
-	if podRestore.Spec.TargetNode != r.NodeName {
-		return ctrl.Result{}, nil
-	}
-
-	// Only process if in Preparing phase (guards against retries after phase transition)
-	if podRestore.Status.Phase != lpmv1.PodRestorePhasePreparing {
-		logger.Info("Skipping PodRestore - not in Preparing phase",
-			"namespace", podRestore.Namespace,
-			"name", podRestore.Name,
-			"phase", podRestore.Status.Phase,
-		)
-		return ctrl.Result{}, nil
-	}
-
 	logger.Info("Detected PodRestore CR for restoration",
 		"namespace", podRestore.Namespace,
 		"name", podRestore.Name,
@@ -548,8 +533,6 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	imagesReady := true
 	statusChanged := false
 	for _, c := range podSnapshot.Spec.Containers {
-		logger.Info("Processing container", "container", c.Name)
-
 		// skip if already resolved
 		if _, ok := podRestore.Status.ImageMapping[c.Name]; ok {
 			logger.Info("Image already prepared for container", "container", c.Name)
@@ -559,15 +542,13 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		// find checkpoint artifact for this container
 		checkpointURI := r.getCheckpointPathForContainer(ctx, &cpc, c.Name)
 		if checkpointURI == "" {
-			// if not found, fail early
 			imagesReady = false
 			logger.Info("No checkpoint found for container", "container", c.Name)
-			break
+			continue
 		}
 
 		imageRef, err := r.convertCheckpointToOCI(ctx, checkpointURI, c.Name)
 		if err != nil {
-			// conversion failed; mark not ready and retry later
 			imagesReady = false
 			logger.Error(err, "Failed to convert checkpoint to OCI image", "container", c.Name, "checkpointURI", checkpointURI)
 			continue
@@ -579,11 +560,6 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		logger.Info("Prepared image for container", "container", c.Name, "image", imageRef)
 	}
 
-	if !imagesReady {
-		logger.Info("Not all images are ready yet for pod, requeueing", "pod", podSnapshot.Name)
-		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
-	}
-
 	// Only update status if we actually made changes
 	if statusChanged {
 		if err := r.Status().Update(ctx, &podRestore); err != nil {
@@ -592,6 +568,11 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 		}
 		logger.Info("Updated PodRestore status with new image mappings", "pod", podSnapshot.Name)
+	}
+
+	if !imagesReady {
+		logger.Info("Not all images are ready yet for pod, requeueing", "pod", podSnapshot.Name)
+		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 	}
 
 	// Let main controller update phase to PodRestorePhaseRestoring

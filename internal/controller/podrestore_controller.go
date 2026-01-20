@@ -126,7 +126,7 @@ func (r *PodRestoreReconciler) handlePending(ctx context.Context, podRestore *lp
 	if err := r.Status().Update(ctx, podRestore); err != nil {
 		return ctrl.Result{}, err
 	}
-	return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+	return ctrl.Result{}, nil
 }
 
 // Node-level agent handles image preparation for containers on the target node
