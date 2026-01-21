@@ -31,16 +31,14 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	lpmv1 "my.domain/guestbook/api/v1"
-	"my.domain/guestbook/internal/agent"
 	"my.domain/guestbook/internal/utils"
 )
 
 // PodMigrationReconciler reconciles a PodMigration object
 type PodMigrationReconciler struct {
 	client.Client
-	Scheme      *runtime.Scheme
-	AgentClient *agent.Client
-	Puller      utils.Puller
+	Scheme *runtime.Scheme
+	Puller utils.Puller
 }
 
 // +kubebuilder:rbac:groups=lpm.my.domain,resources=podmigrations,verbs=get;list;watch;create;update;patch;delete
@@ -56,10 +54,9 @@ type PodMigrationReconciler struct {
 
 func NewPodMigrationReconciler(c client.Client, scheme *runtime.Scheme) *PodMigrationReconciler {
 	return &PodMigrationReconciler{
-		Client:      c,
-		Scheme:      scheme,
-		AgentClient: agent.NewClient(c),
-		Puller:      utils.NewEphemeralPuller(c, "default"),
+		Client: c,
+		Scheme: scheme,
+		Puller: utils.NewEphemeralPuller(c, "default"),
 	}
 }
 
@@ -113,7 +110,7 @@ func (r *PodMigrationReconciler) handlePrePullImagesPhase(ctx context.Context, p
 			imagesToPull = append(imagesToPull, c.Image)
 		}
 
-		podName, err := r.Puller.PullImages(ctx, podMigration.Spec.TargetNode, imagesToPull)
+		podName, err := r.Puller.PullImages(ctx, podMigration.Spec.TargetNode, originalPod.Name, imagesToPull)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to create pull pod: %w", err)
 		}
