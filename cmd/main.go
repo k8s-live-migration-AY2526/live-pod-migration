@@ -39,6 +39,7 @@ import (
 
 	lpmv1 "my.domain/guestbook/api/v1"
 	"my.domain/guestbook/internal/controller"
+	lpmwebhook "my.domain/guestbook/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -224,6 +225,13 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ContainerCheckpoint")
 		os.Exit(1)
 	}
+
+	// Register webhook
+	mgr.GetWebhookServer().Register("/mutate-statefulset-pod-restore", &webhook.Admission{
+		Handler: &lpmwebhook.PodMutator{
+			Client: mgr.GetClient(),
+		},
+	})
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
