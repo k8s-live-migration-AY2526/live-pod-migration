@@ -15,7 +15,6 @@ RUN go mod download
 # Copy the go source
 COPY cmd/checkpoint-agent/main.go cmd/checkpoint-agent/main.go
 COPY api/ api/
-COPY internal/agent/ internal/agent/
 
 # Build
 # the GOARCH has not a default value to allow the binary be built according to the host where the command
