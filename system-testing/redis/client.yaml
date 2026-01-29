@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: redis-client
+  labels:
+    app: counter-app
+spec:
+  nodeName: k8s-worker
+  dnsPolicy: Default
+  restartPolicy: Never
+  containers:
+  - name: python-counter
+    image: python:3.9-slim
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        pip install redis -q && 
+        python3 -c '
+        import time
+        import redis
+        import os
+        import sys
+        import socket
+        import datetime
+
+        # 1. Setup Logging
+        def log(msg):
+            ts = datetime.datetime.now().strftime("%H:%M:%S")
+            print(f"[{ts}] {msg}", flush=True)
+
+        host = os.getenv("REDIS_HOST", "redis-service")
+        
+        # 2. Debug: Resolve DNS immediately to see target IP
+        try:
+            target_ip = socket.gethostbyname(host)
+            log(f"INIT: Hostname {host} resolves to {target_ip}")
+        except Exception as e:
+            log(f"INIT: Could not resolve hostname: {e}")
+
+        # 3. Connect
+        r = redis.Redis(host=host, port=6379)
+
+        log("Starting Loop...")
+        
+        while True:
+            try:
+                
+                # 4. Debug: Get Socket Info & Server Identity
+                # We do this inside the loop to catch changes after migration
+                
+                # Fetch Redis internal Run ID (Identity of the redis process)
+                info = r.info("server")
+                run_id = info.get("run_id", "unknown")[:8] # Shorten ID to 8 chars
+                
+                # Increment
+                new_val = r.incr("my_counter")
+
+                # Get the actual peer IP from the underlying socket
+                connection = r.connection_pool.get_connection()
+                if connection._sock:
+                    peer_ip, peer_port = connection._sock.getpeername()
+                else:
+                    peer_ip = "disconnected"
+
+                # 5. Print Detailed Status
+                log(f"Connected to IP: {peer_ip} | ServerID: {run_id} | Counter: {new_val}")
+                
+                time.sleep(1)
+
+            except redis.ConnectionError:
+                log(f"⚠️  Network Unreachable (Target: {host})")
+                time.sleep(1)
+            except redis.TimeoutError:
+                log(f"⏰ Request Timed Out (Target: {host})")
+            except Exception as e:
+                log(f"❌ Error: {e}")
+                time.sleep(1)
+        '
+    env:
+    - name: REDIS_HOST
+      value: "10.96.1.1"
+    - name: PYTHONUNBUFFERED
+      value: "1"
