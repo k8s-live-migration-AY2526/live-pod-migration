@@ -35,6 +35,9 @@ type PodCheckpointSpec struct {
 
 	// When set to true, will defer termination to after restored
 	DeferTermination bool `json:"deferTermination,omitempty"`
+
+	// When set to true, will checkpoint and close tcp connections
+	CloseTcp bool `json:"closeTcp,omitempty"`
 }
 
 // PodCheckpointStatus defines the observed state of PodCheckpoint.

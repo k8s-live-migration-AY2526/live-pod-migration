@@ -1,0 +1,8 @@
+apiVersion: lpm.my.domain/v1
+kind: PodMigration
+metadata:
+  name: luanti-pod-migration
+  namespace: default
+spec:
+  podName: luanti-set-0
+  targetNode: k8s-worker

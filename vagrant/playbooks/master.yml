@@ -102,8 +102,19 @@
 
     - name: Install Flannel CNI networking
       block:
+        - name: Download Flannel manifest
+          get_url:
+            url: https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+            dest: /tmp/kube-flannel.yml
+
+        - name: Patch Flannel to use eth1 interface
+          replace:
+            path: /tmp/kube-flannel.yml
+            regexp: '(\s+)- --kube-subnet-mgr'
+            replace: '\1- --kube-subnet-mgr\n\1- --iface=eth1'
+
         - name: Apply Flannel manifest
-          command: kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+          command: kubectl apply -f /tmp/kube-flannel.yml
 
     - name: Create live-pod-migration-controller-system namespace
       block:

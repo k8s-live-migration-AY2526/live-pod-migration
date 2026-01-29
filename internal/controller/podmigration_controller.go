@@ -229,6 +229,7 @@ func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigr
 			Spec: lpmv1.PodCheckpointSpec{
 				PodName:          &podMigration.Spec.PodName,
 				DeferTermination: podMigration.Spec.DeferTermination,
+				CloseTcp:         podMigration.Spec.CloseTcp,
 			},
 		}
 		if err := r.Create(ctx, &podCheckpoint); err != nil {
@@ -286,6 +287,7 @@ func (r *PodMigrationReconciler) handleCheckpointingPhase(ctx context.Context, p
 			Spec: lpmv1.PodCheckpointSpec{
 				PodName:          &podMigration.Spec.PodName,
 				DeferTermination: podMigration.Spec.DeferTermination,
+				CloseTcp:         podMigration.Spec.CloseTcp,
 			},
 		}
 		if err := r.Create(ctx, &podCheckpoint); err != nil {

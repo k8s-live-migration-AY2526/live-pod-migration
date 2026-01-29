@@ -1,6 +1,9 @@
-[submodule "kubernetes"]
-	path = kubernetes
+[submodule "dependencies/kubernetes"]
+	path = dependencies/kubernetes
 	url = https://github.com/k8s-live-migration-AY2526/kubernetes.git
-[submodule "cri-o"]
-	path = cri-o
+[submodule "dependencies/cri-o"]
+	path = dependencies/cri-o
 	url = https://github.com/k8s-live-migration-AY2526/cri-o.git
+[submodule "dependencies/runc"]
+	path = dependencies/runc
+	url = https://github.com/k8s-live-migration-AY2526/runc.git

@@ -7,7 +7,7 @@
     go_version_runc: "1.22.2"
     go_version_controller: "1.21.5"
     vagrant_user: "vagrant"
-    project_root: "/home/vagrant/live-pod-migration-controller"
+    dependencies: "/home/vagrant/live-pod-migration-controller/dependencies"
 
   tasks:
     - name: Update and install prereqs
@@ -288,17 +288,30 @@
             creates: /home/{{ vagrant_user }}/.go/bin/go
           become_user: "{{ vagrant_user }}"
 
-        - name: Build runc with CRIU support
+        - name: Ensure runc Source Code Exists
+          stat:
+            path: "{{ dependencies }}/runc"
+          register: runc_src
+
+        - name: Fail if runc source code is missing
+          fail:
+            msg: "runc source code not found at {{ dependencies }}/runc. Please ensure source is synced/mounted."
+          when: not runc_src.stat.exists
+
+        - name: Build and Deploy Custom Runc
           shell: |
-            cd /tmp
-            git clone https://github.com/opencontainers/runc.git
-            cd runc
-            git checkout v1.2.5
+            set -e
+            rm -rf /tmp/runc-build
+            cp -r "{{ dependencies }}/runc" /tmp/runc-build
+            cd /tmp/runc-build
             sed -i '/toolchain/d' go.mod
             /home/{{ vagrant_user }}/.go/bin/go build -trimpath -buildmode=pie -tags "seccomp apparmor selinux criu" \
               -ldflags "-X main.gitCommit=v1.2.5-criu -X main.version=1.2.5" -o runc .
             sudo cp runc /usr/sbin/runc
             sudo chmod +x /usr/sbin/runc
+            rm -rf /tmp/runc-build
+          become: true
+          become_user: "{{ vagrant_user }}"
 
         - name: Fix CRI-O drop-in config to use runc
           lineinfile:
@@ -379,17 +392,17 @@
       block:
         - name: Ensure Source Code Exists
           stat:
-            path: "{{ project_root }}/kubernetes"
+            path: "{{ dependencies }}/kubernetes"
           register: k8s_src
 
         - name: Fail if source code is missing
           fail:
-            msg: "Kubernetes source code not found at {{ project_root }}. Please ensure source is synced/mounted."
+            msg: "Kubernetes source code not found at {{ dependencies }}. Please ensure source is synced/mounted."
           when: not k8s_src.stat.exists
 
         - name: Ensure Vagrant owns the source code
           file:
-            path: "{{ project_root }}"
+            path: "{{ dependencies }}"
             owner: "{{ vagrant_user }}"
             group: "{{ vagrant_user }}"
             recurse: yes
@@ -399,18 +412,18 @@
           shell: |
             make all WHAT=cmd/kubelet KUBE_GIT_VERSION=v1.30.14
           args:
-            chdir: "{{ project_root }}/kubernetes"
+            chdir: "{{ dependencies }}/kubernetes"
           become: true
           become_user: "{{ vagrant_user }}"
 
         - name: Verify Kubelet Binary Exists
           stat:
-            path: "{{ project_root }}/kubernetes/_output/local/go/bin/kubelet"
+            path: "{{ dependencies }}/kubernetes/_output/local/go/bin/kubelet"
           register: kubelet_bin
 
         - name: Fail if Kubelet binary is missing
           fail:
-            msg: "Build passed but binary not found at {{ project_root }}/kubernetes/_output/local/go/bin/kubelet"
+            msg: "Build passed but binary not found at {{ dependencies }}/kubernetes/_output/local/go/bin/kubelet"
           when: not kubelet_bin.stat.exists
 
         - name: Stop Kubelet Service
@@ -428,7 +441,7 @@
 
         - name: Deploy Custom Kubelet Binary
           copy:
-            src: "{{ project_root }}/kubernetes/_output/local/go/bin/kubelet"
+            src: "{{ dependencies }}/kubernetes/_output/local/go/bin/kubelet"
             dest: "/usr/bin/kubelet"
             remote_src: yes
             mode: '0755'
@@ -448,19 +461,19 @@
       block:
         - name: Ensure Source Code Exists
           stat:
-            path: "{{ project_root }}/cri-o"
+            path: "{{ dependencies }}/cri-o"
           register: crio_src
 
         - name: Fail if source code is missing
           fail:
-            msg: "CRIO source code not found at {{ project_root }}. Please ensure source is synced/mounted."
+            msg: "CRIO source code not found at {{ dependencies }}. Please ensure source is synced/mounted."
           when: not crio_src.stat.exists
 
         - name: Build Custom CRI-O
           shell: |
             PATH=/home/{{ vagrant_user }}/.go/bin:$PATH make
           args:
-            chdir: "{{ project_root }}/cri-o"
+            chdir: "{{ dependencies }}/cri-o"
 
         - name: Stop CRI-O
           systemd:
@@ -477,7 +490,7 @@
 
         - name: Deploy Custom CRI-O
           copy:
-            src: "{{ project_root }}/cri-o/bin/crio"
+            src: "{{ dependencies }}/cri-o/bin/crio"
             dest: "/usr/bin/crio"
             remote_src: yes
             mode: '0755'
