@@ -18,9 +18,14 @@ package webhook
 
 import (
 	"context"
+	"net/http"
 
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
+
+	lpmv1 "my.domain/guestbook/api/v1"
 )
 
 type PodMutator struct {
@@ -28,6 +33,86 @@ type PodMutator struct {
 	decoder admission.Decoder
 }
 
+func (m *PodMutator) InjectDecoder(d admission.Decoder) error {
+	m.decoder = d
+	return nil
+}
+
 func (m *PodMutator) Handle(ctx context.Context, req admission.Request) admission.Response {
+	logger := log.FromContext(ctx)
+
+	pod := &corev1.Pod{}
+	if err := m.decoder.Decode(req, pod); err != nil {
+		logger.Error(err, "Failed to decode pod")
+		return admission.Errored(http.StatusBadRequest, err)
+	}
+
+	logger.Info("Pod mutation webhook invoked",
+		"pod", pod.Name,
+		"namespace", pod.Namespace,
+		"operation", req.Operation)
+
+	if !isOwnedByStatefulSet(pod) {
+		return admission.Allowed("not a StatefulSet pod")
+	}
+
+	logger.Info("Detected StatefulSet pod creation",
+		"pod", pod.Name,
+		"namespace", pod.Namespace,
+		"operation", req.Operation)
+
+	podRestore, err := m.findActivePodRestore(ctx, pod)
+	if err != nil {
+		logger.Error(err, "Failed to check for active PodRestore")
+		return admission.Errored(http.StatusInternalServerError, err)
+	}
+
+	if podRestore == nil {
+		return admission.Allowed("no active migration")
+	}
+
+	logger.Info("Active PodRestore found for pod")
+
 	return admission.Allowed("migration detected")
+}
+
+func (m *PodMutator) findActivePodRestore(ctx context.Context, pod *corev1.Pod) (*lpmv1.PodRestore, error) {
+	logger := log.FromContext(ctx)
+
+	var podRestoreList lpmv1.PodRestoreList
+	if err := m.Client.List(ctx, &podRestoreList, client.InNamespace(pod.Namespace)); err != nil {
+		return nil, err
+	}
+
+	for _, pr := range podRestoreList.Items {
+		if !pr.Spec.IsStatefulSet {
+			continue
+		}
+
+		if pr.Status.RestoredPodName != pod.Name {
+			continue
+		}
+
+		if pr.Status.Phase != lpmv1.PodRestorePhaseRestoring {
+			continue
+		}
+
+		logger.Info("Found matching PodRestore",
+			"podRestore", pr.Name,
+			"pod", pod.Name,
+			"phase", pr.Status.Phase)
+
+		return &pr, nil
+	}
+
+	return nil, nil
+}
+
+func isOwnedByStatefulSet(pod *corev1.Pod) bool {
+	for _, ownerRef := range pod.OwnerReferences {
+		if ownerRef.Kind == "StatefulSet" {
+			return true
+		}
+	}
+	return false
 }
