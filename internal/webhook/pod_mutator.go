@@ -18,6 +18,7 @@ package webhook
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	corev1 "k8s.io/api/core/v1"
@@ -63,17 +64,42 @@ func (m *PodMutator) Handle(ctx context.Context, req admission.Request) admissio
 
 	podRestore, err := m.findActivePodRestore(ctx, pod)
 	if err != nil {
-		logger.Error(err, "Failed to check for active PodRestore")
+		logger.Error(err, "Failed to find active PodRestore")
+		return admission.Allowed("failed to find active PodRestore")
+	}
+	if podRestore == nil {
+		return admission.Allowed("no related active migration")
+	}
+
+	logger.Info("Active PodRestore found for pod", "podRestore", podRestore.Name)
+
+	for i, container := range pod.Spec.Containers {
+		if checkpointImage, ok := podRestore.Status.ImageMapping[container.Name]; ok {
+			pod.Spec.Containers[i].Image = checkpointImage
+			pod.Spec.Containers[i].ImagePullPolicy = corev1.PullNever
+		}
+	}
+
+	if podRestore.Spec.TargetNode != "" {
+		if pod.Spec.NodeSelector == nil {
+			pod.Spec.NodeSelector = make(map[string]string)
+		}
+		pod.Spec.NodeSelector["kubernetes.io/hostname"] = podRestore.Spec.TargetNode
+	}
+
+	if pod.Labels == nil {
+		pod.Labels = make(map[string]string)
+	}
+	pod.Labels["migration-job"] = podRestore.Name
+
+	marshaledPod, err := json.Marshal(pod)
+	if err != nil {
+		logger.Error(err, "Failed to marshal mutated pod")
 		return admission.Errored(http.StatusInternalServerError, err)
 	}
 
-	if podRestore == nil {
-		return admission.Allowed("no active migration")
-	}
-
-	logger.Info("Active PodRestore found for pod")
-
-	return admission.Allowed("migration detected")
+	logger.Info("Pod mutated successfully with checkpoint images", "pod", pod.Name)
+	return admission.PatchResponseFromRaw(req.Object.Raw, marshaledPod)
 }
 
 func (m *PodMutator) findActivePodRestore(ctx context.Context, pod *corev1.Pod) (*lpmv1.PodRestore, error) {

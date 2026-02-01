@@ -316,7 +316,13 @@ func (r *PodRestoreReconciler) handleStatefulSetRestoration(ctx context.Context,
 		return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, fmt.Sprintf("failed to get pod checkpoint content: %v", err))
 	}
 
-	// Check if pod exists
+	if podRestore.Status.RestoredPodName == "" {
+		podRestore.Status.RestoredPodName = cpc.Spec.PodName
+		if err := r.Status().Update(ctx, podRestore); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	var srcPod corev1.Pod
 	if err := r.Get(ctx, client.ObjectKey{Namespace: podRestore.Namespace, Name: cpc.Spec.PodName}, &srcPod); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -330,56 +336,36 @@ func (r *PodRestoreReconciler) handleStatefulSetRestoration(ctx context.Context,
 		return ctrl.Result{}, err
 	}
 
-	// Patch StatefulSet template if not already done
-	if podRestore.Status.StatefulSetRestore == nil {
-		if err := r.patchStatefulSetTemplate(ctx, &srcPod, podRestore); err != nil {
-			return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed,
-				fmt.Sprintf("failed to patch StatefulSet: %v", err))
+	// Check if this is the original pod (needs deletion) or recreated pod (monitor status)
+	if srcPod.Status.Phase == corev1.PodRunning && len(srcPod.Spec.Containers) > 0 {
+		usingCheckpointImages := true
+		for _, container := range srcPod.Spec.Containers {
+			if expectedImage, ok := podRestore.Status.ImageMapping[container.Name]; ok {
+				if container.Image != expectedImage {
+					usingCheckpointImages = false
+					break
+				}
+			}
 		}
-		logger.Info("StatefulSet template patched", "statefulSet", podRestore.Status.StatefulSetRestore.Name)
+
+		if usingCheckpointImages {
+			logger.Info("StatefulSet pod successfully restored with checkpoint images", "pod", srcPod.Name)
+			return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseSucceeded, "StatefulSet pod restored and running")
+		}
 	}
 
-	// Check if this is the original pod or a recreated pod using UID
-	if string(srcPod.UID) == podRestore.Status.StatefulSetRestore.OriginalPodUID {
-		// Delete the original pod (StatefulSet will recreate it)
-		logger.Info("Deleting original pod", "pod", srcPod.Name, "uid", srcPod.UID)
-		if err := r.Delete(ctx, &srcPod); err != nil && !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, fmt.Errorf("failed to delete original pod: %w", err)
-		}
-
-		podRestore.Status.RestoredPodName = srcPod.Name // Same ordinal name required
-		podRestore.Status.Message = "original pod deletion requested, waiting for StatefulSet to recreate"
-		if err := r.Status().Update(ctx, podRestore); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	logger.Info("Deleting original pod to trigger StatefulSet recreation", "pod", srcPod.Name, "uid", srcPod.UID)
+	if err := r.Delete(ctx, &srcPod); err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, fmt.Errorf("failed to delete original pod: %w", err)
 	}
 
-	// Pod recreated with new template, observe status
-	logger.Info("Observing recreated pod", "pod", srcPod.Name, "uid", srcPod.UID, "phase", srcPod.Status.Phase)
-
-	switch srcPod.Status.Phase {
-	case corev1.PodRunning:
-		// Verify that the pod is using checkpoint images
-		if r.isPodUsingCheckpointImages(&srcPod, podRestore) {
-			logger.Info("StatefulSet pod successfully recreated with checkpoint images", "pod", srcPod.Name)
-			return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseSucceeded, "StatefulSet pod successfully restored and running")
-		} else {
-			logger.Error(nil, "Recreated pod is not using checkpoint images", "pod", srcPod.Name)
-			return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, "recreated pod is not using checkpoint images")
-		}
-
-	case corev1.PodFailed:
-		return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, "recreated pod failed to start")
-
-	default:
-		logger.Info("Recreated pod in progress", "pod", srcPod.Name, "phase", srcPod.Status.Phase)
-		podRestore.Status.Message = fmt.Sprintf("recreated pod phase: %s", srcPod.Status.Phase)
-		if err := r.Status().Update(ctx, podRestore); err != nil {
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	podRestore.Status.Message = "pod deletion requested, webhook will inject checkpoint images on recreation"
+	if err := r.Status().Update(ctx, podRestore); err != nil {
+		return ctrl.Result{}, err
 	}
+
+	logger.Info("Original pod deleted, waiting for recreation", "pod", srcPod.Name)
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
 func (r *PodRestoreReconciler) patchStatefulSetTemplate(ctx context.Context, srcPod *corev1.Pod, podRestore *lpmv1.PodRestore) error {
