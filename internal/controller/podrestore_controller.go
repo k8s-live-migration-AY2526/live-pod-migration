@@ -23,7 +23,6 @@ import (
 	"strings"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -223,7 +222,7 @@ func (r *PodRestoreReconciler) handlePodRestoration(ctx context.Context, podRest
 				}
 				return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 			}
-			return ctrl.Result{}, r.updatePhase(ctx, podRestore, "Failed", fmt.Sprintf("failed to create restored pod: %v", err))
+			return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, fmt.Sprintf("failed to create restored pod: %v", err))
 		}
 
 		// record restored pod name and continue monitoring
@@ -368,120 +367,7 @@ func (r *PodRestoreReconciler) handleStatefulSetRestoration(ctx context.Context,
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
-func (r *PodRestoreReconciler) patchStatefulSetTemplate(ctx context.Context, srcPod *corev1.Pod, podRestore *lpmv1.PodRestore) error {
-	logger := log.FromContext(ctx)
-
-	owner := metav1.GetControllerOf(srcPod)
-	if owner == nil {
-		return fmt.Errorf("pod %s/%s has no controller", srcPod.Namespace, srcPod.Name)
-	}
-
-	sts := &appsv1.StatefulSet{}
-	if err := r.Get(ctx, client.ObjectKey{Namespace: srcPod.Namespace, Name: owner.Name}, sts); err != nil {
-		return err
-	}
-
-	// Store the original template
-	if podRestore.Status.StatefulSetRestore == nil {
-		originalTemplateBytes, err := json.Marshal(sts.Spec.Template)
-		if err != nil {
-			return fmt.Errorf("failed to encode original StatefulSet template: %w", err)
-		}
-		originalTemplate := string(originalTemplateBytes)
-		podRestore.Status.StatefulSetRestore = &lpmv1.StatefulSetRestoreInfo{
-			Name:             sts.Name,
-			OriginalTemplate: originalTemplate,
-			OriginalPodUID:   string(srcPod.UID),
-		}
-
-		// Update the status to persist the original template
-		if err := r.Status().Update(ctx, podRestore); err != nil {
-			return fmt.Errorf("failed to update podRestore with original template: %w", err)
-		}
-		logger.Info("Stored original StatefulSet template", "statefulSet", sts.Name)
-	}
-
-	patched := sts.DeepCopy()
-
-	// Ensure update strategy is OnDelete so deleting a single pod results in recreation
-	patched.Spec.UpdateStrategy = appsv1.StatefulSetUpdateStrategy{
-		Type: appsv1.OnDeleteStatefulSetStrategyType,
-	}
-
-	// Patch container images to use checkpoint images
-	for i, c := range patched.Spec.Template.Spec.Containers {
-		if img, ok := podRestore.Status.ImageMapping[c.Name]; ok {
-			patched.Spec.Template.Spec.Containers[i].Image = img
-			patched.Spec.Template.Spec.Containers[i].ImagePullPolicy = corev1.PullNever
-		}
-	}
-
-	if patched.Spec.Template.Labels == nil {
-		patched.Spec.Template.Labels = map[string]string{}
-	}
-	patched.Spec.Template.Labels["migration-job"] = podRestore.Name
-
-	// Constrain placement to target node (via nodeSelector)
-	if podRestore.Spec.TargetNode != "" {
-		if patched.Spec.Template.Spec.NodeSelector == nil {
-			patched.Spec.Template.Spec.NodeSelector = map[string]string{}
-		}
-		patched.Spec.Template.Spec.NodeSelector["kubernetes.io/hostname"] = podRestore.Spec.TargetNode
-	}
-
-	return r.Patch(ctx, patched, client.MergeFrom(sts))
-}
-
-func (r *PodRestoreReconciler) restoreStatefulSetTemplate(ctx context.Context, podRestore *lpmv1.PodRestore) error {
-	logger := log.FromContext(ctx)
-
-	if podRestore.Status.StatefulSetRestore == nil {
-		logger.Info("No StatefulSet restore info stored, skipping restore")
-		return nil
-	}
-
-	sts := &appsv1.StatefulSet{}
-	statefulSetKey := client.ObjectKey{
-		Namespace: podRestore.Namespace,
-		Name:      podRestore.Status.StatefulSetRestore.Name,
-	}
-
-	if err := r.Get(ctx, statefulSetKey, sts); err != nil {
-		if apierrors.IsNotFound(err) {
-			logger.Info("StatefulSet not found, skipping template restore", "statefulSet", statefulSetKey.Name)
-			return nil
-		}
-		return fmt.Errorf("failed to get StatefulSet: %w", err)
-	}
-
-	var originalTemplate corev1.PodTemplateSpec
-	if err := json.Unmarshal([]byte(podRestore.Status.StatefulSetRestore.OriginalTemplate), &originalTemplate); err != nil {
-		return fmt.Errorf("failed to unmarshal original StatefulSet template: %w", err)
-	}
-
-	patched := sts.DeepCopy()
-	patched.Spec.Template = originalTemplate
-
-	if err := r.Patch(ctx, patched, client.MergeFrom(sts)); err != nil {
-		return fmt.Errorf("failed to patch StatefulSet with original template: %w", err)
-	}
-
-	logger.Info("Successfully restored original StatefulSet template", "statefulSet", sts.Name)
-	return nil
-}
-
-func (r *PodRestoreReconciler) handleCompleted(ctx context.Context, podRestore *lpmv1.PodRestore) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
-	if podRestore.Spec.IsStatefulSet {
-		if err := r.restoreStatefulSetTemplate(ctx, podRestore); err != nil {
-			logger.Error(err, "Failed to restore StatefulSet template", "podRestore", podRestore.Name)
-			// Don't fail the migration just because template restore failed
-		} else {
-			logger.Info("StatefulSet template restored successfully", "statefulSet", podRestore.Status.StatefulSetRestore.Name)
-		}
-	}
-
+func (r *PodRestoreReconciler) handleCompleted(_ context.Context, _ *lpmv1.PodRestore) (ctrl.Result, error) {
 	return ctrl.Result{}, nil
 }
 
@@ -562,41 +448,6 @@ func (r *PodRestoreReconciler) isPodUsingCheckpointImages(pod *corev1.Pod, podRe
 		}
 	}
 	return true
-}
-
-func (r *PodRestoreReconciler) deleteOriginalPod(ctx context.Context, podRestore *lpmv1.PodRestore) error {
-	logger := log.FromContext(ctx)
-
-	cpc, err := r.getPodCheckpointContent(ctx, podRestore)
-	if err != nil {
-		return fmt.Errorf("failed to get pod checkpoint content: %w", err)
-	}
-
-	originalPodName := cpc.Spec.PodName
-	if podRestore.Status.RestoredPodName == originalPodName {
-		// Avoid deleting the restored pod if it has the same name as the original
-		logger.Info("Restored pod name matches original pod name; skipping deletion", "pod", originalPodName)
-		return nil
-	}
-
-	var originalPod corev1.Pod
-	err = r.Get(ctx, client.ObjectKey{
-		Namespace: cpc.Spec.PodNamespace,
-		Name:      originalPodName,
-	}, &originalPod)
-
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("failed to get original pod for deletion: %w", err)
-	}
-
-	err = r.Delete(ctx, &originalPod)
-	if err != nil {
-		return fmt.Errorf("failed to delete original pod: %w", err)
-	}
-	return nil
 }
 
 // getCheckpointPathForContainer locates the artifactURI inside PodCheckpointContent for a container name
