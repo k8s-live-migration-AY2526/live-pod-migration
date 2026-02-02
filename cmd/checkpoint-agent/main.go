@@ -557,7 +557,7 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		go func() {
 			defer wg.Done()
 
-			checkpointURI := r.getCheckpointPathForContainer(ctx, &cpc, c.Name)
+			checkpointURI := r.getCheckpointPathForContainer(ctx, &cpc, containerName)
 			if checkpointURI == "" {
 				resultChan <- conversionResult{
 					containerName: containerName,
