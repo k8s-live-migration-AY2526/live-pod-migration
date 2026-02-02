@@ -15,7 +15,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -492,7 +491,8 @@ func (r *CheckpointReconciler) copyToSharedStorage(podUID, containerName, localP
 // PodRestoreReconciler handles PodRestore events
 type PodRestoreReconciler struct {
 	client.Client
-	NodeName string
+	NodeName     string
+	buildahMutex sync.Mutex
 }
 
 // Reconcile processes PodRestore events
@@ -538,16 +538,13 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	logger.Info("Preparing images for pod restoration", "pod", podSnapshot.Name)
 
-	// Convert checkpoints to OCI images concurrently
-	g, gCtx := errgroup.WithContext(ctx)
-	g.SetLimit(5)
-
 	type conversionResult struct {
 		containerName string
 		imageRef      string
+		err           error
 	}
-	results := make([]conversionResult, 0, len(podSnapshot.Spec.Containers))
-	mu := sync.Mutex{}
+	resultChan := make(chan conversionResult, len(podSnapshot.Spec.Containers))
+	var wg sync.WaitGroup
 
 	for _, c := range podSnapshot.Spec.Containers {
 		if _, ok := podRestore.Status.ImageMapping[c.Name]; ok {
@@ -555,43 +552,53 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			continue
 		}
 
-		checkpointURI := r.getCheckpointPathForContainer(ctx, &cpc, c.Name)
-		if checkpointURI == "" {
-			logger.Info("No checkpoint found for container", "container", c.Name)
-			continue
-		}
-
 		containerName := c.Name
-		g.Go(func() error {
-			imageRef, err := r.convertCheckpointToOCI(gCtx, checkpointURI, containerName)
-			if err != nil {
-				return fmt.Errorf("container %s: %w", containerName, err)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			checkpointURI := r.getCheckpointPathForContainer(ctx, &cpc, c.Name)
+			if checkpointURI == "" {
+				resultChan <- conversionResult{
+					containerName: containerName,
+					err:           fmt.Errorf("checkpoint URI not found for container %s", containerName),
+				}
+				return
 			}
 
-			mu.Lock()
-			results = append(results, conversionResult{
+			imageRef, err := r.convertCheckpointToOCI(ctx, checkpointURI, containerName)
+			if err != nil {
+				resultChan <- conversionResult{
+					containerName: containerName,
+					err:           fmt.Errorf("error converting checkpoint for container %s: %w", containerName, err),
+				}
+				return
+			}
+
+			resultChan <- conversionResult{
 				containerName: containerName,
 				imageRef:      imageRef,
-			})
-			mu.Unlock()
-			return nil
-		})
+			}
+		}()
 	}
 
-	convertErr := g.Wait()
+	wg.Wait()
+	close(resultChan)
 
-	// Update even if there were conversion errors to avoid repeated work
-	if len(results) > 0 {
-		for _, r := range results {
-			podRestore.Status.ImageMapping[r.containerName] = r.imageRef
-			logger.Info("Prepared image for container", "container", r.containerName, "image", r.imageRef)
+	var convertErr error
+	for res := range resultChan {
+		if res.err != nil {
+			logger.Error(res.err, "Failed to convert checkpoint to OCI image", "container", res.containerName)
+			convertErr = res.err
+			continue
 		}
+		podRestore.Status.ImageMapping[res.containerName] = res.imageRef
+		logger.Info("Prepared image for container", "container", res.containerName, "image", res.imageRef)
+	}
 
-		if err := r.Status().Update(ctx, &podRestore); err != nil {
-			logger.Error(err, "Failed to update PodRestore status after image preparation")
-			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
-		}
-		logger.Info("Updated PodRestore status with new image mappings", "pod", podSnapshot.Name)
+	if err := r.Status().Update(ctx, &podRestore); err != nil {
+		logger.Error(err, "Failed to update PodRestore status with image mappings")
+		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 	}
 
 	if convertErr != nil {
@@ -599,19 +606,7 @@ func (r *PodRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
 	}
 
-	imagesReady := true
-	for _, c := range podSnapshot.Spec.Containers {
-		if _, ok := podRestore.Status.ImageMapping[c.Name]; !ok {
-			imagesReady = false
-			break
-		}
-	}
-
-	if !imagesReady {
-		logger.Info("Not all images are ready yet for pod, requeueing", "pod", podSnapshot.Name)
-		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
-	}
-
+	// If we get to this point, all images are prepared. Otherwise, we would have returned error earlier
 	// Let main controller update phase to PodRestorePhaseRestoring
 	logger.Info("All images prepared for pod restoration", "pod", podSnapshot.Name)
 	return ctrl.Result{}, nil
@@ -678,6 +673,10 @@ func (r *PodRestoreReconciler) convertCheckpointToOCI(ctx context.Context, check
 
 	// Common buildah flags to use the mounted container storage
 	buildahFlags := []string{"--root", "/var/lib/containers/storage"}
+
+	// Serialize buildah operations to prevent storage contention
+	r.buildahMutex.Lock()
+	defer r.buildahMutex.Unlock()
 
 	// Create a working container from scratch
 	cmd := exec.Command("buildah", append(buildahFlags, "from", "scratch")...)
