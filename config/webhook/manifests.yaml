@@ -11,7 +11,8 @@ webhooks:
       namespace: system
       path: /mutate-statefulset-pod-restore
   failurePolicy: Ignore
-  name: mpod.kb.io
+  name: pod-mutator.live-pod-migration.my.domain
+  timeoutSeconds: 3
   namespaceSelector:
     matchExpressions:
     - key: kubernetes.io/metadata.name

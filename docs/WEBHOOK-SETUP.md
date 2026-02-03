@@ -31,44 +31,9 @@ To remove the webhook:
 
 This removes:
 - MutatingWebhookConfiguration
+- Mutating webhook service
 - Certificate secret
 - Local certificate files
-
-## Manual Setup (if needed)
-
-<details>
-<summary>Click to expand manual steps</summary>
-
-### Step 1: Generate Certificate
-
-```bash
-mkdir -p /tmp/k8s-webhook-certs
-openssl req -x509 -newkey rsa:2048 \
-  -keyout /tmp/k8s-webhook-certs/tls.key \
-  -out /tmp/k8s-webhook-certs/tls.crt \
-  -days 365 -nodes \
-  -subj "/CN=lpm-webhook-service.live-pod-migration-controller-system.svc"
-```
-
-### Step 2: Create Kubernetes Secret
-
-```bash
-kubectl create secret tls webhook-server-cert \
-  --cert=/tmp/k8s-webhook-certs/tls.crt \
-  --key=/tmp/k8s-webhook-certs/tls.key \
-  -n live-pod-migration-controller-system
-```
-
-### Step 3: Patch Webhook Configuration
-
-```bash
-CA_BUNDLE=$(cat /tmp/k8s-webhook-certs/tls.crt | base64 | tr -d '\n')
-kubectl patch mutatingwebhookconfiguration lpm-mutating-webhook-configuration \
-  --type='json' \
-  -p="[{'op': 'add', 'path': '/webhooks/0/clientConfig/caBundle', 'value':'${CA_BUNDLE}'}]"
-```
-
-</details>
 
 ## Verification
 
@@ -80,9 +45,6 @@ kubectl get mutatingwebhookconfigurations lpm-mutating-webhook-configuration
 
 # Check webhook service
 kubectl get svc -n live-pod-migration-controller-system lpm-webhook-service
-
-# View webhook logs (create a StatefulSet pod to see detection)
-kubectl logs -n live-pod-migration-controller-system deployment/lpm-controller-manager -f | grep "pod-mutator"
 ```
 
 ## Troubleshooting

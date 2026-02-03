@@ -110,7 +110,8 @@ func (m *PodMutator) findActivePodRestore(ctx context.Context, pod *corev1.Pod) 
 		return nil, err
 	}
 
-	for _, pr := range podRestoreList.Items {
+	for i := range podRestoreList.Items {
+		pr := &podRestoreList.Items[i]
 		if !pr.Spec.IsStatefulSet {
 			continue
 		}
@@ -128,7 +129,7 @@ func (m *PodMutator) findActivePodRestore(ctx context.Context, pod *corev1.Pod) 
 			"pod", pod.Name,
 			"phase", pr.Status.Phase)
 
-		return &pr, nil
+		return pr, nil
 	}
 
 	return nil, nil

@@ -54,7 +54,7 @@ CA_BUNDLE=$(cat ${CERT_DIR}/tls.crt | base64 | tr -d '\n')
 echo "Patching webhook configuration with CA bundle..."
 kubectl patch mutatingwebhookconfiguration lpm-mutating-webhook-configuration \
   --type='json' \
-  -p="[{'op': 'add', 'path': '/webhooks/0/clientConfig/caBundle', 'value':'${CA_BUNDLE}'}]"
+  -p="[{\"op\": \"replace\", \"path\": \"/webhooks/0/clientConfig/caBundle\", \"value\":\"${CA_BUNDLE}\"}]"
 
 # Restart controller to pick up new certificate
 echo "Restarting controller to load new certificate..."

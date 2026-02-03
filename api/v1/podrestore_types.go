@@ -32,18 +32,10 @@ const (
 	PodRestorePhaseFailed    PodRestorePhase = "Failed"
 )
 
-// StatefulSetRestoreInfo contains information needed to restore a StatefulSet's
-// original template after migration completion.
+// StatefulSetRestoreInfo contains information needed for StatefulSet pod restoration.
 type StatefulSetRestoreInfo struct {
-	// Name is the name of the StatefulSet being migrated.
-	Name string `json:"name"`
-
-	// OriginalTemplate stores the JSON-serialized original pod template
-	// before migration modifications.
-	OriginalTemplate string `json:"originalTemplate"`
-
 	// OriginalPodUID stores the UID of the original pod to distinguish it
-	// from the recreated pod.
+	// from the recreated pod during StatefulSet migration.
 	OriginalPodUID string `json:"originalPodUID"`
 }
 

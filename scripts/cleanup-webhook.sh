@@ -12,6 +12,10 @@ echo "🗑️  Cleaning up webhook..."
 echo "Deleting webhook configuration..."
 kubectl delete mutatingwebhookconfiguration lpm-mutating-webhook-configuration --ignore-not-found=true
 
+# Delete webhook service
+echo "Deleting webhook service..."
+kubectl delete service lpm-webhook-service -n ${NAMESPACE} --ignore-not-found=true
+
 # Delete certificate secret
 echo "Deleting webhook certificate secret..."
 kubectl delete secret webhook-server-cert -n ${NAMESPACE} --ignore-not-found=true

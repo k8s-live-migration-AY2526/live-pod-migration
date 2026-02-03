@@ -325,34 +325,52 @@ func (r *PodRestoreReconciler) handleStatefulSetRestoration(ctx context.Context,
 	var srcPod corev1.Pod
 	if err := r.Get(ctx, client.ObjectKey{Namespace: podRestore.Namespace, Name: cpc.Spec.PodName}, &srcPod); err != nil {
 		if apierrors.IsNotFound(err) {
-			logger.Info("Pod not found during StatefulSet restoration", "pod", cpc.Spec.PodName)
-			podRestore.Status.Message = "waiting for StatefulSet to recreate pod"
-			if statusErr := r.Status().Update(ctx, podRestore); statusErr != nil {
-				return ctrl.Result{}, statusErr
+			// Pod doesn't exist - either not deleted yet or already deleted and awaiting recreation
+			if podRestore.Status.StatefulSetRestore != nil && podRestore.Status.StatefulSetRestore.OriginalPodUID != "" {
+				logger.Info("Original pod deleted, waiting for StatefulSet recreation", "pod", cpc.Spec.PodName)
+				podRestore.Status.Message = "waiting for StatefulSet to recreate pod"
+				if statusErr := r.Status().Update(ctx, podRestore); statusErr != nil {
+					return ctrl.Result{}, statusErr
+				}
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 			}
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			// Haven't deleted yet, pod genuinely doesn't exist - something is wrong
+			return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, "original pod not found")
 		}
 		return ctrl.Result{}, err
 	}
 
-	// Check if this is the original pod (needs deletion) or recreated pod (monitor status)
-	if srcPod.Status.Phase == corev1.PodRunning && len(srcPod.Spec.Containers) > 0 {
-		usingCheckpointImages := true
-		for _, container := range srcPod.Spec.Containers {
-			if expectedImage, ok := podRestore.Status.ImageMapping[container.Name]; ok {
-				if container.Image != expectedImage {
-					usingCheckpointImages = false
-					break
-				}
-			}
+	if podRestore.Status.StatefulSetRestore == nil {
+		podRestore.Status.StatefulSetRestore = &lpmv1.StatefulSetRestoreInfo{
+			OriginalPodUID: string(srcPod.UID),
+		}
+		if err := r.Status().Update(ctx, podRestore); err != nil {
+			return ctrl.Result{}, err
+		}
+		logger.Info("Recorded original pod UID", "pod", srcPod.Name, "uid", srcPod.UID)
+	}
+
+	if string(srcPod.UID) != podRestore.Status.StatefulSetRestore.OriginalPodUID {
+		if !r.isPodUsingCheckpointImages(&srcPod, podRestore) {
+			errMsg := "recreated pod is not using checkpoint images - webhook may have failed to inject them"
+			logger.Error(nil, errMsg, "pod", srcPod.Name, "uid", srcPod.UID)
+			return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, errMsg)
 		}
 
-		if usingCheckpointImages {
+		if srcPod.Status.Phase == corev1.PodRunning {
 			logger.Info("StatefulSet pod successfully restored with checkpoint images", "pod", srcPod.Name)
 			return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseSucceeded, "StatefulSet pod restored and running")
 		}
+
+		logger.Info("Recreated pod is starting", "pod", srcPod.Name, "phase", srcPod.Status.Phase)
+		podRestore.Status.Message = fmt.Sprintf("waiting for recreated pod to start")
+		if err := r.Status().Update(ctx, podRestore); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
+	// This is the original pod - delete it to trigger StatefulSet recreation
 	logger.Info("Deleting original pod to trigger StatefulSet recreation", "pod", srcPod.Name, "uid", srcPod.UID)
 	if err := r.Delete(ctx, &srcPod); err != nil && !apierrors.IsNotFound(err) {
 		return ctrl.Result{}, fmt.Errorf("failed to delete original pod: %w", err)
