@@ -36,9 +36,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
+	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	lpmv1 "my.domain/guestbook/api/v1"
 	"my.domain/guestbook/internal/controller"
+	lpmwebhook "my.domain/guestbook/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -224,6 +226,21 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ContainerCheckpoint")
 		os.Exit(1)
 	}
+
+	decoder := admission.NewDecoder(mgr.GetScheme())
+	podMutator := &lpmwebhook.PodMutator{
+		Client: mgr.GetClient(),
+	}
+
+	if err := podMutator.InjectDecoder(decoder); err != nil {
+		setupLog.Error(err, "unable to inject decoder into PodMutator")
+		os.Exit(1)
+	}
+
+	mgr.GetWebhookServer().Register("/mutate-statefulset-pod-restore", &admission.Webhook{
+		Handler: podMutator,
+	})
+
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {
