@@ -65,7 +65,7 @@ func (m *PodMutator) Handle(ctx context.Context, req admission.Request) admissio
 	podRestore, err := m.findActivePodRestore(ctx, pod)
 	if err != nil {
 		logger.Error(err, "Failed to find active PodRestore")
-		return admission.Allowed("failed to find active PodRestore")
+		return admission.Errored(http.StatusInternalServerError, err)
 	}
 	if podRestore == nil {
 		return admission.Allowed("no related active migration")

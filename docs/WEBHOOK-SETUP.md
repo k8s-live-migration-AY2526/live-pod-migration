@@ -5,21 +5,33 @@ The mutating webhook intercepts pod creation requests to detect StatefulSet pods
 ## Quick Setup
 
 ### Prerequisites
-- Controller must be deployed first: `make deploy IMG=localhost/controller:latest AGENT_IMG=localhost/checkpoint-agent:latest`
 - Namespace: `live-pod-migration-controller-system`
 
-### Setup Webhook
+### Setup Sequence
 
-Run the setup script:
+The controller deployment requires the `webhook-server-cert` Secret to exist (it's mounted as a volume). Follow this sequence:
 
-```bash
-./scripts/setup-webhook.sh
-```
+1. **Deploy the controller:**
+   ```bash
+   make deploy IMG=localhost/controller:latest AGENT_IMG=localhost/checkpoint-agent:latest
+   ```
+   Note: The controller manager pod will remain in `ContainerCreating` or `Pending` state until the certificate secret is created.
 
-This script will:
-1. Generate self-signed certificates
-2. Create a Kubernetes secret with the certificates
-3. Patch the webhook configuration with the CA bundle
+2. **Run the webhook setup script immediately** (before waiting for pod readiness):
+   ```bash
+   ./scripts/setup-webhook.sh
+   ```
+   
+   This script will:
+   - Generate self-signed certificates with proper SANs
+   - Create the `webhook-server-cert` Secret (allowing the controller pod to start)
+   - Patch the webhook configuration with the CA bundle
+   - Restart the controller to load the certificates
+
+3. **Verify the controller is running:**
+   ```bash
+   kubectl get pods -n live-pod-migration-controller-system
+   ```
 
 ### Cleanup Webhook
 

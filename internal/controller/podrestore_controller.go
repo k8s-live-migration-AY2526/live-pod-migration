@@ -363,7 +363,7 @@ func (r *PodRestoreReconciler) handleStatefulSetRestoration(ctx context.Context,
 		}
 
 		logger.Info("Recreated pod is starting", "pod", srcPod.Name, "phase", srcPod.Status.Phase)
-		podRestore.Status.Message = fmt.Sprintf("waiting for recreated pod to start")
+		podRestore.Status.Message = "waiting for recreated pod to start"
 		if err := r.Status().Update(ctx, podRestore); err != nil {
 			return ctrl.Result{}, err
 		}
