@@ -39,6 +39,13 @@ type StatefulSetRestoreInfo struct {
 	OriginalPodUID string `json:"originalPodUID"`
 }
 
+// DeploymentRestoreInfo contains information needed for Deployment pod restoration.
+type DeploymentRestoreInfo struct {
+	// OriginalPodUID stores the UID of the original pod to distinguish it
+	// from the recreated pod during Deployment migration.
+	OriginalPodUID string `json:"originalPodUID"`
+}
+
 // PodRestoreSpec defines the desired state of PodRestore.
 type PodRestoreSpec struct {
 	// PodCheckpointContentRef references the PodCheckpointContent that holds
@@ -56,6 +63,11 @@ type PodRestoreSpec struct {
 	// When true, the controller will patch the StatefulSet template and manage
 	// pod recreation through the StatefulSet controller.
 	IsStatefulSet bool `json:"isStatefulSet,omitempty"`
+
+	// IsDeployment indicates whether this is a Deployment pod restoration.
+	// When true, the controller will delete the original pod and let the Deployment
+	// controller recreate it with checkpoint images injected via the webhook.
+	IsDeployment bool `json:"isDeployment,omitempty"`
 }
 
 // PodRestoreStatus defines the observed state of PodRestore.
@@ -81,6 +93,10 @@ type PodRestoreStatus struct {
 	// StatefulSetRestore contains information needed to restore the original StatefulSet
 	// template after migration completion. This field is only populated for StatefulSet pods.
 	StatefulSetRestore *StatefulSetRestoreInfo `json:"statefulSetRestore,omitempty"`
+
+	// DeploymentRestore contains information needed to track the original Deployment pod
+	// during migration. This field is only populated for Deployment pods.
+	DeploymentRestore *DeploymentRestoreInfo `json:"deploymentRestore,omitempty"`
 }
 
 // +kubebuilder:object:root=true

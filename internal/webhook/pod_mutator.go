@@ -53,13 +53,15 @@ func (m *PodMutator) Handle(ctx context.Context, req admission.Request) admissio
 		"namespace", pod.Namespace,
 		"operation", req.Operation)
 
-	if !isOwnedByStatefulSet(pod) {
-		return admission.Allowed("not a StatefulSet pod")
+	ownerKind := getOwnerKind(pod)
+	if ownerKind == "" {
+		return admission.Allowed("not a StatefulSet or Deployment pod")
 	}
 
-	logger.Info("Detected StatefulSet pod creation",
+	logger.Info("Detected StatefulSet or Deployment pod creation",
 		"pod", pod.Name,
 		"namespace", pod.Namespace,
+		"ownerKind", ownerKind,
 		"operation", req.Operation)
 
 	podRestore, err := m.findActivePodRestore(ctx, pod)
@@ -112,15 +114,11 @@ func (m *PodMutator) findActivePodRestore(ctx context.Context, pod *corev1.Pod) 
 
 	for i := range podRestoreList.Items {
 		pr := &podRestoreList.Items[i]
-		if !pr.Spec.IsStatefulSet {
+		if pr.Status.Phase != lpmv1.PodRestorePhaseRestoring {
 			continue
 		}
 
 		if pr.Status.RestoredPodName != pod.Name {
-			continue
-		}
-
-		if pr.Status.Phase != lpmv1.PodRestorePhaseRestoring {
 			continue
 		}
 
@@ -135,11 +133,11 @@ func (m *PodMutator) findActivePodRestore(ctx context.Context, pod *corev1.Pod) 
 	return nil, nil
 }
 
-func isOwnedByStatefulSet(pod *corev1.Pod) bool {
+func getOwnerKind(pod *corev1.Pod) string {
 	for _, ownerRef := range pod.OwnerReferences {
-		if ownerRef.Kind == "StatefulSet" {
-			return true
+		if ownerRef.Kind == "StatefulSet" || ownerRef.Kind == "ReplicaSet" {
+			return ownerRef.Kind
 		}
 	}
-	return false
+	return ""
 }
