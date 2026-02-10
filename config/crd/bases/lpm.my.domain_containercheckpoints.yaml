@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: containercheckpoints.lpm.my.domain
 spec:
   group: lpm.my.domain
@@ -40,8 +40,14 @@ spec:
           spec:
             description: ContainerCheckpointSpec defines the desired state of ContainerCheckpoint.
             properties:
+              closeTcp:
+                description: When set to true, will checkpoint and close tcp connections
+                type: boolean
               containerName:
                 type: string
+              deferTermination:
+                description: When set to true, will defer termination to after restored
+                type: boolean
               podName:
                 type: string
             required:

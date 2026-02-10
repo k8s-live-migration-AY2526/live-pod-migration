@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: podmigrations.lpm.my.domain
 spec:
   group: lpm.my.domain
@@ -52,9 +52,23 @@ spec:
           spec:
             description: PodMigrationSpec defines the desired state of PodMigration.
             properties:
+              closeTcp:
+                description: When set to true, will checkpoint and close tcp connections
+                type: boolean
+              deferTermination:
+                description: When set to true, will defer termination to after restored
+                type: boolean
               podName:
                 description: Name of the Pod to migrate (required).
                 type: string
+              retainOriginalPod:
+                default: false
+                description: |-
+                  RetainOriginalPod indicates whether to keep the original Pod after migration.
+                  By default, the original Pod will be deleted after successful migration.
+                  For StatefulSet pods, the original pod will be deleted regardless of this flag
+                  to enable recreation by the StatefulSet controller.
+                type: boolean
               targetNode:
                 description: TargetNode is the name of the node where the Pod should
                   be restored.
@@ -76,6 +90,18 @@ spec:
                 description: EphemeralPullPodName is the name of the ephemeral pod
                   used to pull images.
                 type: string
+              isDeployment:
+                description: |-
+                  IsDeployment indicates whether this migration involves a Deployment pod.
+                  This field is automatically set by the controller when it detects that
+                  the source pod is owned by a Deployment controller.
+                type: boolean
+              isStatefulSet:
+                description: |-
+                  IsStatefulSet indicates whether this migration involves a StatefulSet pod.
+                  This field is automatically set by the controller when it detects that
+                  the source pod is owned by a StatefulSet controller.
+                type: boolean
               message:
                 description: |-
                   Message is a human-readable summary of the most recent state transition
