@@ -110,8 +110,14 @@ spec:
                       OriginalPodUID stores the UID of the original pod to distinguish it
                       from the recreated pod during Deployment migration.
                     type: string
+                  replicaSetName:
+                    description: |-
+                      ReplicaSetName is the name of the ReplicaSet that owns the original pod.
+                      Used by the webhook to match only pods from the correct ReplicaSet.
+                    type: string
                 required:
                 - originalPodUID
+                - replicaSetName
                 type: object
               imageMapping:
                 additionalProperties:

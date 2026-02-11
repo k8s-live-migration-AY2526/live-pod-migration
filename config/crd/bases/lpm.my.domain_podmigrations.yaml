@@ -92,9 +92,9 @@ spec:
                 type: string
               isDeployment:
                 description: |-
-                  IsDeployment indicates whether this migration involves a Deployment pod.
+                  IsDeployment indicates whether this migration involves a pod managed by a Deployment.
                   This field is automatically set by the controller when it detects that
-                  the source pod is owned by a Deployment controller.
+                  the source pod is owned by a ReplicaSet controller which implies it's managed by a Deployment.
                 type: boolean
               isStatefulSet:
                 description: |-

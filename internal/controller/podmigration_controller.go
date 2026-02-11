@@ -167,15 +167,17 @@ func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigr
 		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, "source pod not running")
 	}
 
-	owner := metav1.GetControllerOf(&srcPod)
-	if owner != nil {
-		if owner.Kind == "StatefulSet" {
-			podMigration.Status.IsStatefulSet = true
-		} else if owner.Kind == "ReplicaSet" {
-			podMigration.Status.IsDeployment = true
-		}
-		if err := r.Status().Update(ctx, podMigration); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to update %s flag: %w", owner.Kind, err)
+	if !podMigration.Status.IsStatefulSet && !podMigration.Status.IsDeployment {
+		owner := metav1.GetControllerOf(&srcPod)
+		if owner != nil {
+			if owner.Kind == "StatefulSet" {
+				podMigration.Status.IsStatefulSet = true
+			} else if owner.Kind == "ReplicaSet" {
+				podMigration.Status.IsDeployment = true
+			}
+			if err := r.Status().Update(ctx, podMigration); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to update %s flag: %w", owner.Kind, err)
+			}
 		}
 	}
 

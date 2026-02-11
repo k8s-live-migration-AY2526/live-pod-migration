@@ -44,6 +44,10 @@ type DeploymentRestoreInfo struct {
 	// OriginalPodUID stores the UID of the original pod to distinguish it
 	// from the recreated pod during Deployment migration.
 	OriginalPodUID string `json:"originalPodUID"`
+
+	// ReplicaSetName is the name of the ReplicaSet that owns the original pod.
+	// Used by the webhook to match only pods from the correct ReplicaSet.
+	ReplicaSetName string `json:"replicaSetName"`
 }
 
 // PodRestoreSpec defines the desired state of PodRestore.

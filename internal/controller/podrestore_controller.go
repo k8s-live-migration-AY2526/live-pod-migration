@@ -350,6 +350,7 @@ func (r *PodRestoreReconciler) handleStatefulSetRestoration(ctx context.Context,
 		if err := r.Status().Update(ctx, podRestore); err != nil {
 			return ctrl.Result{}, err
 		}
+		logger.Info("Recorded original pod UID", "pod", srcPod.Name, "uid", srcPod.UID)
 	}
 
 	if string(srcPod.UID) != podRestore.Status.StatefulSetRestore.OriginalPodUID {
@@ -408,6 +409,7 @@ func (r *PodRestoreReconciler) handleDeploymentRestoration(ctx context.Context, 
 
 		podRestore.Status.DeploymentRestore = &lpmv1.DeploymentRestoreInfo{
 			OriginalPodUID: string(srcPod.UID),
+			ReplicaSetName: getReplicaSetOwner(&srcPod),
 		}
 		if err := r.Status().Update(ctx, podRestore); err != nil {
 			return ctrl.Result{}, err
@@ -600,4 +602,12 @@ func (r *PodRestoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&lpmv1.PodRestore{}).
 		Named("podrestore").
 		Complete(r)
+}
+
+func getReplicaSetOwner(pod *corev1.Pod) string {
+	controller := metav1.GetControllerOf(pod)
+	if controller != nil && controller.Kind == "ReplicaSet" {
+		return controller.Name
+	}
+	return ""
 }
