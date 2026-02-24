@@ -176,7 +176,7 @@ func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigr
 				podMigration.Status.IsDeployment = true
 			}
 			if err := r.Status().Update(ctx, podMigration); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to update %s flag: %w", owner.Kind, err)
+				return ctrl.Result{}, fmt.Errorf("failed to update migration owner flag: %w", err)
 			}
 		}
 	}
