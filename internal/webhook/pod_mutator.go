@@ -56,10 +56,10 @@ func (m *PodMutator) Handle(ctx context.Context, req admission.Request) admissio
 
 	ownerKind := getOwnerKind(pod)
 	if ownerKind == "" {
-		return admission.Allowed("not a StatefulSet or Deployment pod")
+		return admission.Allowed("not a StatefulSet or Deployment/ReplicaSet pod")
 	}
 
-	logger.Info("Detected StatefulSet or Deployment pod creation",
+	logger.Info("Detected StatefulSet or Deployment/ReplicaSet pod creation",
 		"pod", pod.Name,
 		"namespace", pod.Namespace,
 		"ownerKind", ownerKind,
