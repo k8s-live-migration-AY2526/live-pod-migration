@@ -330,6 +330,12 @@ func (r *PodRestoreReconciler) handleStatefulSetRestoration(ctx context.Context,
 		if apierrors.IsNotFound(err) {
 			// Pod doesn't exist - either not deleted yet or already deleted and awaiting recreation
 			if podRestore.Status.StatefulSetRestore != nil && podRestore.Status.StatefulSetRestore.OriginalPodUID != "" {
+				if podRestore.Status.StartTime != nil && time.Since(podRestore.Status.StartTime.Time) > 5*time.Minute {
+					errMsg := "StatefulSet pod recreation timed out (>5m)"
+					logger.Error(nil, errMsg, "pod", cpc.Spec.PodName)
+					return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, errMsg)
+				}
+
 				logger.Info("Original pod deleted, waiting for StatefulSet recreation", "pod", cpc.Spec.PodName)
 				podRestore.Status.Message = "waiting for StatefulSet to recreate pod"
 				if statusErr := r.Status().Update(ctx, podRestore); statusErr != nil {
@@ -447,6 +453,12 @@ func (r *PodRestoreReconciler) handleDeploymentRestoration(ctx context.Context, 
 	}
 
 	if restoredPod == nil {
+		if podRestore.Status.StartTime != nil && time.Since(podRestore.Status.StartTime.Time) > 5*time.Minute {
+			errMsg := "Deployment pod recreation timed out (>5m)"
+			logger.Error(nil, errMsg, "podRestore", podRestore.Name)
+			return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, errMsg)
+		}
+
 		logger.Info("Waiting for Deployment to recreate pod with checkpoint images")
 		podRestore.Status.Message = "waiting for Deployment to recreate pod"
 		if err := r.Status().Update(ctx, podRestore); err != nil {
