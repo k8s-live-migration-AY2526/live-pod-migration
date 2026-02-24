@@ -167,14 +167,17 @@ func (r *PodMigrationReconciler) handlePendingPhase(ctx context.Context, podMigr
 		return ctrl.Result{}, r.updatePhase(ctx, podMigration, lpmv1.MigrationPhaseFailed, "source pod not running")
 	}
 
-	// 2.5. Detect StatefulSet pod
-	if !podMigration.Status.IsStatefulSet {
-		if owner := metav1.GetControllerOf(&srcPod); owner != nil && owner.Kind == "StatefulSet" {
-			podMigration.Status.IsStatefulSet = true
-			if err := r.Status().Update(ctx, podMigration); err != nil {
-				return ctrl.Result{}, fmt.Errorf("failed to update StatefulSet flag: %w", err)
+	if !podMigration.Status.IsStatefulSet && !podMigration.Status.IsDeployment {
+		owner := metav1.GetControllerOf(&srcPod)
+		if owner != nil {
+			if owner.Kind == "StatefulSet" {
+				podMigration.Status.IsStatefulSet = true
+			} else if owner.Kind == "ReplicaSet" {
+				podMigration.Status.IsDeployment = true
 			}
-			logger.Info("Detected StatefulSet pod, updated migration status", "pod", srcPod.Name, "statefulSet", owner.Name)
+			if err := r.Status().Update(ctx, podMigration); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to update %s flag: %w", owner.Kind, err)
+			}
 		}
 	}
 
@@ -380,6 +383,7 @@ func (r *PodMigrationReconciler) handleRestoringPhase(ctx context.Context, podMi
 				PodCheckpointContentRef: corev1.LocalObjectReference{Name: podCheckpoint.Status.BoundContentName},
 				TargetNode:              podMigration.Spec.TargetNode,
 				IsStatefulSet:           podMigration.Status.IsStatefulSet,
+				IsDeployment:            podMigration.Status.IsDeployment,
 			},
 		}
 		if err := r.Create(ctx, &podRestore); err != nil {

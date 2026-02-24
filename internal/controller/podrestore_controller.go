@@ -188,6 +188,9 @@ func (r *PodRestoreReconciler) handleRestoring(ctx context.Context, podRestore *
 	if podRestore.Spec.IsStatefulSet {
 		return r.handleStatefulSetRestoration(ctx, podRestore)
 	}
+	if podRestore.Spec.IsDeployment {
+		return r.handleDeploymentRestoration(ctx, podRestore)
+	}
 	return r.handlePodRestoration(ctx, podRestore)
 }
 
@@ -327,6 +330,12 @@ func (r *PodRestoreReconciler) handleStatefulSetRestoration(ctx context.Context,
 		if apierrors.IsNotFound(err) {
 			// Pod doesn't exist - either not deleted yet or already deleted and awaiting recreation
 			if podRestore.Status.StatefulSetRestore != nil && podRestore.Status.StatefulSetRestore.OriginalPodUID != "" {
+				if podRestore.Status.StartTime != nil && time.Since(podRestore.Status.StartTime.Time) > 5*time.Minute {
+					errMsg := "StatefulSet pod recreation timed out (>5m)"
+					logger.Error(nil, errMsg, "pod", cpc.Spec.PodName)
+					return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, errMsg)
+				}
+
 				logger.Info("Original pod deleted, waiting for StatefulSet recreation", "pod", cpc.Spec.PodName)
 				podRestore.Status.Message = "waiting for StatefulSet to recreate pod"
 				if statusErr := r.Status().Update(ctx, podRestore); statusErr != nil {
@@ -382,6 +391,105 @@ func (r *PodRestoreReconciler) handleStatefulSetRestoration(ctx context.Context,
 	}
 
 	logger.Info("Original pod deleted, waiting for recreation", "pod", srcPod.Name)
+	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+}
+
+func (r *PodRestoreReconciler) handleDeploymentRestoration(ctx context.Context, podRestore *lpmv1.PodRestore) (ctrl.Result, error) {
+	logger := log.FromContext(ctx)
+	logger.Info("Handling Deployment pod restoration", "name", podRestore.Name)
+
+	cpc, err := r.getPodCheckpointContent(ctx, podRestore)
+	if err != nil {
+		return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, fmt.Sprintf("failed to get pod checkpoint content: %v", err))
+	}
+
+	// Record original pod UID and delete it
+	if podRestore.Status.DeploymentRestore == nil {
+		var srcPod corev1.Pod
+		if err := r.Get(ctx, client.ObjectKey{Namespace: podRestore.Namespace, Name: cpc.Spec.PodName}, &srcPod); err != nil {
+			if apierrors.IsNotFound(err) {
+				return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, "original pod not found")
+			}
+			return ctrl.Result{}, err
+		}
+
+		podRestore.Status.DeploymentRestore = &lpmv1.DeploymentRestoreInfo{
+			OriginalPodUID: string(srcPod.UID),
+			ReplicaSetName: getReplicaSetOwner(&srcPod),
+		}
+		if err := r.Status().Update(ctx, podRestore); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		logger.Info("Deleting original pod to trigger Deployment recreation", "pod", srcPod.Name, "uid", srcPod.UID)
+		if err := r.Delete(ctx, &srcPod); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("failed to delete original pod: %w", err)
+		}
+
+		podRestore.Status.Message = "pod deletion requested, webhook will inject checkpoint images on recreation"
+		if err := r.Status().Update(ctx, podRestore); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	// Find the recreated pod by migration-job label. We cannot find via name because Deployment adds a random suffix
+	// to recreated pod's name.
+	var podList corev1.PodList
+	if err := r.List(ctx, &podList,
+		client.InNamespace(podRestore.Namespace),
+		client.MatchingLabels{"migration-job": podRestore.Name},
+	); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Filter out the original pod by UID
+	var restoredPod *corev1.Pod
+	for i := range podList.Items {
+		if string(podList.Items[i].UID) != podRestore.Status.DeploymentRestore.OriginalPodUID {
+			restoredPod = &podList.Items[i]
+			break
+		}
+	}
+
+	if restoredPod == nil {
+		if podRestore.Status.StartTime != nil && time.Since(podRestore.Status.StartTime.Time) > 5*time.Minute {
+			errMsg := "Deployment pod recreation timed out (>5m)"
+			logger.Error(nil, errMsg, "podRestore", podRestore.Name)
+			return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, errMsg)
+		}
+
+		logger.Info("Waiting for Deployment to recreate pod with checkpoint images")
+		podRestore.Status.Message = "waiting for Deployment to recreate pod"
+		if err := r.Status().Update(ctx, podRestore); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	}
+
+	if !r.isPodUsingCheckpointImages(restoredPod, podRestore) {
+		errMsg := "recreated pod is not using checkpoint images - webhook may have failed to inject them"
+		logger.Error(nil, errMsg, "pod", restoredPod.Name, "uid", restoredPod.UID)
+		return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseFailed, errMsg)
+	}
+
+	if podRestore.Status.RestoredPodName != restoredPod.Name {
+		podRestore.Status.RestoredPodName = restoredPod.Name
+		if err := r.Status().Update(ctx, podRestore); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
+	if restoredPod.Status.Phase == corev1.PodRunning {
+		logger.Info("Deployment pod successfully restored with checkpoint images", "pod", restoredPod.Name)
+		return ctrl.Result{}, r.updatePhase(ctx, podRestore, lpmv1.PodRestorePhaseSucceeded, "Deployment pod restored and running")
+	}
+
+	logger.Info("Recreated pod is starting", "pod", restoredPod.Name, "phase", restoredPod.Status.Phase)
+	podRestore.Status.Message = "waiting for recreated pod to start"
+	if err := r.Status().Update(ctx, podRestore); err != nil {
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 }
 
@@ -506,4 +614,12 @@ func (r *PodRestoreReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&lpmv1.PodRestore{}).
 		Named("podrestore").
 		Complete(r)
+}
+
+func getReplicaSetOwner(pod *corev1.Pod) string {
+	controller := metav1.GetControllerOf(pod)
+	if controller != nil && controller.Kind == "ReplicaSet" {
+		return controller.Name
+	}
+	return ""
 }

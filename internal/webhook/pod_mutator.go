@@ -22,6 +22,7 @@ import (
 	"net/http"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -53,13 +54,15 @@ func (m *PodMutator) Handle(ctx context.Context, req admission.Request) admissio
 		"namespace", pod.Namespace,
 		"operation", req.Operation)
 
-	if !isOwnedByStatefulSet(pod) {
-		return admission.Allowed("not a StatefulSet pod")
+	ownerKind := getOwnerKind(pod)
+	if ownerKind == "" {
+		return admission.Allowed("not a StatefulSet or Deployment pod")
 	}
 
-	logger.Info("Detected StatefulSet pod creation",
+	logger.Info("Detected StatefulSet or Deployment pod creation",
 		"pod", pod.Name,
 		"namespace", pod.Namespace,
+		"ownerKind", ownerKind,
 		"operation", req.Operation)
 
 	podRestore, err := m.findActivePodRestore(ctx, pod)
@@ -110,17 +113,37 @@ func (m *PodMutator) findActivePodRestore(ctx context.Context, pod *corev1.Pod) 
 		return nil, err
 	}
 
+	ownerKind := getOwnerKind(pod)
+
 	for i := range podRestoreList.Items {
 		pr := &podRestoreList.Items[i]
-		if !pr.Spec.IsStatefulSet {
-			continue
-		}
-
-		if pr.Status.RestoredPodName != pod.Name {
-			continue
-		}
-
 		if pr.Status.Phase != lpmv1.PodRestorePhaseRestoring {
+			continue
+		}
+
+		// For Deployment pods, we cannot match by name because ReplicaSet generates a random suffix.
+		// Instead, match by ReplicaSet owner name and ensure the PodRestore has initiated
+		// deletion (DeploymentRestore != nil) and hasn't already been claimed (RestoredPodName still empty).
+		if pr.Spec.IsDeployment && ownerKind == "ReplicaSet" {
+			if pr.Status.DeploymentRestore == nil {
+				continue
+			}
+			if pr.Status.RestoredPodName != "" {
+				continue
+			}
+			if pr.Status.DeploymentRestore.ReplicaSetName != getReplicaSetOwner(pod) {
+				continue
+			}
+			logger.Info("Found matching Deployment PodRestore",
+				"podRestore", pr.Name,
+				"pod", pod.Name,
+				"replicaSet", pr.Status.DeploymentRestore.ReplicaSetName,
+				"phase", pr.Status.Phase)
+			return pr, nil
+		}
+
+		// For StatefulSet and standalone pods, name is expected and can be directly matched
+		if pr.Status.RestoredPodName != pod.Name {
 			continue
 		}
 
@@ -135,11 +158,21 @@ func (m *PodMutator) findActivePodRestore(ctx context.Context, pod *corev1.Pod) 
 	return nil, nil
 }
 
-func isOwnedByStatefulSet(pod *corev1.Pod) bool {
-	for _, ownerRef := range pod.OwnerReferences {
-		if ownerRef.Kind == "StatefulSet" {
-			return true
-		}
+func getOwnerKind(pod *corev1.Pod) string {
+	controller := metav1.GetControllerOf(pod)
+	if controller == nil {
+		return ""
 	}
-	return false
+	if controller.Kind == "StatefulSet" || controller.Kind == "ReplicaSet" {
+		return controller.Kind
+	}
+	return ""
+}
+
+func getReplicaSetOwner(pod *corev1.Pod) string {
+	controller := metav1.GetControllerOf(pod)
+	if controller != nil && controller.Kind == "ReplicaSet" {
+		return controller.Name
+	}
+	return ""
 }

@@ -82,6 +82,11 @@ type PodMigrationStatus struct {
 	// This field is automatically set by the controller when it detects that
 	// the source pod is owned by a StatefulSet controller.
 	IsStatefulSet bool `json:"isStatefulSet,omitempty"`
+
+	// IsDeployment indicates whether this migration involves a pod managed by a Deployment.
+	// This field is automatically set by the controller when it detects that
+	// the source pod is owned by a ReplicaSet controller which implies it's managed by a Deployment.
+	IsDeployment bool `json:"isDeployment,omitempty"`
 }
 
 // +kubebuilder:object:root=true

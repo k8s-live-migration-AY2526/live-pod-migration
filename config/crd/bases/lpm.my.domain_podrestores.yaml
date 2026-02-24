@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
+    controller-gen.kubebuilder.io/version: v0.18.0
   name: podrestores.lpm.my.domain
 spec:
   group: lpm.my.domain
@@ -52,6 +52,18 @@ spec:
           spec:
             description: PodRestoreSpec defines the desired state of PodRestore.
             properties:
+              isDeployment:
+                description: |-
+                  IsDeployment indicates whether this is a Deployment pod restoration.
+                  When true, the controller will delete the original pod and let the Deployment
+                  controller recreate it with checkpoint images injected via the webhook.
+                type: boolean
+              isStatefulSet:
+                description: |-
+                  IsStatefulSet indicates whether this is a StatefulSet pod restoration.
+                  When true, the controller will patch the StatefulSet template and manage
+                  pod recreation through the StatefulSet controller.
+                type: boolean
               podCheckpointContentRef:
                 description: |-
                   PodCheckpointContentRef references the PodCheckpointContent that holds
@@ -68,6 +80,10 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-map-type: atomic
+              restoredPodName:
+                description: RestoredPodName is the name to assign to the restored
+                  Pod.
+                type: string
               targetNode:
                 description: |-
                   TargetNode optionally pins the restored Pod to a specific node.
@@ -84,6 +100,25 @@ spec:
                   states).
                 format: date-time
                 type: string
+              deploymentRestore:
+                description: |-
+                  DeploymentRestore contains information needed to track the original Deployment pod
+                  during migration. This field is only populated for Deployment pods.
+                properties:
+                  originalPodUID:
+                    description: |-
+                      OriginalPodUID stores the UID of the original pod to distinguish it
+                      from the recreated pod during Deployment migration.
+                    type: string
+                  replicaSetName:
+                    description: |-
+                      ReplicaSetName is the name of the ReplicaSet that owns the original pod.
+                      Used by the webhook to match only pods from the correct ReplicaSet.
+                    type: string
+                required:
+                - originalPodUID
+                - replicaSetName
+                type: object
               imageMapping:
                 additionalProperties:
                   type: string
@@ -104,6 +139,19 @@ spec:
                 description: StartTime indicates when restore began.
                 format: date-time
                 type: string
+              statefulSetRestore:
+                description: |-
+                  StatefulSetRestore contains information needed to restore the original StatefulSet
+                  template after migration completion. This field is only populated for StatefulSet pods.
+                properties:
+                  originalPodUID:
+                    description: |-
+                      OriginalPodUID stores the UID of the original pod to distinguish it
+                      from the recreated pod during StatefulSet migration.
+                    type: string
+                required:
+                - originalPodUID
+                type: object
             type: object
         type: object
     served: true
