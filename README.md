@@ -2,6 +2,8 @@
 
 A Kubernetes-native controller that enables live migration of running pods between cluster nodes using CRIU (Checkpoint/Restore In Userspace) technology. The system performs checkpoint operations on source nodes and restores pod state on destination nodes while preserving process memory, file descriptors, and application state.
 
+Note that the documention on this page might not be up-to-date. A summary of this project (as of March 2026) is attached [here](https://docs.google.com/document/d/1ZVfnZeKAxfwW873oCq-5oaHG73-I7a3ynwKDx3fslcg/edit?usp=sharing)
+
 ## Description
 
 The Live Pod Migration Controller implements a complete control-plane and node agent architecture for migrating stateful workloads across Kubernetes cluster nodes. It provides three main capabilities:
