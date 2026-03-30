@@ -1,0 +1,72 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minecraft-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: nfs-csi
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minecraft-service
+  labels:
+    app: minecraft
+spec:
+  ports:
+  - port: 25565
+    name: game
+  clusterIP: None
+  selector:
+    app: minecraft
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: minecraft-sts
+spec:
+  serviceName: "minecraft-service"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minecraft
+  template:
+    metadata:
+      labels:
+        app: minecraft
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+      - name: minecraft
+        image: itzg/minecraft-server
+        env:
+        - name: EULA
+          value: "TRUE"
+        - name: VERSION
+          value: "1.20.1"
+        # Force a large world gen or specific heavy mode if possible, but default is already slow enough
+        ports:
+        - containerPort: 25565
+          name: game
+        resources:
+          requests:
+            cpu: "300m"
+            memory: "1Gi"
+          limits:
+            cpu: "300m"
+            memory: "1.5Gi"
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: cache-vol
+          mountPath: /data/.cache
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: minecraft-pvc
+      - name: cache-vol
+        emptyDir: {}

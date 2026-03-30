@@ -1,0 +1,143 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: benchmark-cpu-script
+  labels:
+    app: benchmark-cpu
+data:
+  app.py: |
+    import time
+    import math
+    import hashlib
+    import sys
+    import os
+
+    # Configuration
+    TARGET_STARTUP_TIME = 30  # Seconds of CPU grind
+    MEMORY_SIZE_MB = 512       # Small memory footprint
+    DATA_FILE = "/data/status.txt"
+
+
+
+    def burn_cpu(duration):
+        start = time.time()
+        c = 0
+        while time.time() - start < duration:
+            Math_result = math.sqrt(c + 1) * math.tan(c)
+            c += 1
+            if c % 500000 == 0:
+                 elapsed = time.time() - start
+                 progress = (elapsed / duration) * 100
+                 print(f"[{time.strftime('%X')}] Initializing... {progress:.1f}%", flush=True)
+
+    def allocate_memory(size_mb):
+        print(f"[{time.strftime('%X')}] Allocating {size_mb} MB of memory...", flush=True)
+        try:
+            # Allocate memory using a bytearray to ensure it consumes RSS
+            # 1 MB = 1024 * 1024 bytes
+            global memory_buffer
+            memory_buffer = bytearray(size_mb * 1024 * 1024)
+            # Touch pages to ensure physical allocation if needed (though bytearray Init usually does this)
+            # simple access to beginning and end
+            if size_mb > 0:
+                memory_buffer[0] = 1
+                memory_buffer[-1] = 1
+            print(f"[{time.strftime('%X')}] Memory allocation complete.", flush=True)
+        except Exception as e:
+            print(f"[{time.strftime('%X')}] Memory allocation FAILED: {e}", flush=True)
+
+    LOG_PATH = "/data/benchmark.log"
+    
+    print(f"[{time.strftime('%X')}] Starting Server...", flush=True)
+
+    # Initialize log file
+    with open(LOG_PATH, "w") as log:
+        log.write(f"{time.time():.4f} STARTED\n")
+        
+    print(f"[{time.strftime('%X')}] Performing Initialization ({TARGET_STARTUP_TIME}s)...", flush=True)
+    allocate_memory(MEMORY_SIZE_MB)
+    burn_cpu(TARGET_STARTUP_TIME)
+    # with open(DATA_FILE, "w") as f:
+    #    f.write("READY")
+    print(f"[{time.strftime('%X')}] Initialization Complete!", flush=True)
+    
+    # Simple Logging Loop for Downtime Measurement
+    print(f"[{time.strftime('%X')}] Entering Serving Loop...", flush=True)
+    i = 0
+    while True:
+        # Log to FILE on shared storage/PVC so it persists across migration
+        try:
+            with open(LOG_PATH, "a") as log:
+                # Format: TIMESTAMP REQUEST_ID
+                log.write(f"{time.time():.4f} Serving Request {i}\n")
+                # Also print to stdout for debugging
+                print(f"{time.time():.4f} Serving Request {i}", flush=True)
+        except Exception as e:
+            print(f"Error writing to log: {e}", flush=True)
+            
+        time.sleep(0.1) # 100ms resolution
+        i += 1
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: benchmark-cpu
+  labels:
+    app: benchmark-cpu
+spec:
+  ports:
+  - port: 80
+    name: http
+  clusterIP: None
+  selector:
+    app: benchmark-cpu
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: benchmark-cpu
+spec:
+  serviceName: "benchmark-cpu"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: benchmark-cpu
+  template:
+    metadata:
+      labels:
+        app: benchmark-cpu
+    spec:
+      terminationGracePeriodSeconds: 0
+      containers:
+      - name: cpu-app
+        image: python:3.9-alpine
+        command: ["python", "/scripts/app.py"]
+        resources:
+          requests:
+            cpu: "500m"
+            memory: "600Mi"
+        volumeMounts:
+        - name: script-vol
+          mountPath: /scripts
+        - name: data-vol
+          mountPath: /data
+      volumes:
+      - name: script-vol
+        configMap:
+          name: benchmark-cpu-script
+      - name: data-vol
+        persistentVolumeClaim:
+          claimName: benchmark-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: benchmark-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-csi
+  resources:
+    requests:
+      storage: 100Mi
