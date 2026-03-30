@@ -97,13 +97,94 @@ func (r *PodMigrationReconciler) handlePrePullImagesPhase(ctx context.Context, p
 	logger := log.FromContext(ctx)
 	logger.Info("Handling PrePullImages phase for PodMigration", "name", podMigration.Name)
 
-	// Trigger image pulling if not already started
-	if podMigration.Status.EphemeralPullPodName == "" {
-		originalPod, err := r.getOriginalPod(ctx, podMigration)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to get original pod: %w", err)
+	originalPod, err := r.getOriginalPod(ctx, podMigration)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get original pod: %w", err)
+	}
+
+	if podMigration.Spec.TargetNode == "" {
+		dummyPodName := fmt.Sprintf("%s-dummy-scheduler", podMigration.Name)
+		var dummyPod corev1.Pod
+		err := r.Get(ctx, client.ObjectKey{Namespace: podMigration.Namespace, Name: dummyPodName}, &dummyPod)
+
+		if err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, fmt.Errorf("failed to get dummy pod: %w", err)
 		}
 
+		if apierrors.IsNotFound(err) {
+			// Create dummy pod
+			logger.Info("TargetNode is empty, creating dummy pod to determine schedule node")
+			dummyPod = corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      dummyPodName,
+					Namespace: podMigration.Namespace,
+					Labels: map[string]string{
+						"app": "live-pod-migration-dummy",
+					},
+				},
+				Spec: corev1.PodSpec{
+					NodeSelector:  originalPod.Spec.NodeSelector,
+					Affinity:      originalPod.Spec.Affinity,
+					Tolerations:   originalPod.Spec.Tolerations,
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			}
+
+			// Add a dummy container with the requested resources of the original pod
+			// This ensures the scheduler considers the resource requirements
+			var totalReq corev1.ResourceList = make(corev1.ResourceList)
+			for _, c := range originalPod.Spec.Containers {
+				for rName, rQuant := range c.Resources.Requests {
+					if existing, ok := totalReq[rName]; ok {
+						existing.Add(rQuant)
+						totalReq[rName] = existing
+					} else {
+						totalReq[rName] = rQuant.DeepCopy()
+					}
+				}
+			}
+
+			dummyPod.Spec.Containers = []corev1.Container{
+				{
+					Name:      "dummy",
+					Image:     "alpine:latest",
+					Command:   []string{"sleep", "3600"},
+					Resources: corev1.ResourceRequirements{Requests: totalReq},
+				},
+			}
+
+			if err := r.Create(ctx, &dummyPod); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to create dummy pod: %w", err)
+			}
+			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+		}
+
+		// Dummy pod exists, check if it has been scheduled
+		if dummyPod.Spec.NodeName != "" {
+			logger.Info("Dummy pod scheduled", "node", dummyPod.Spec.NodeName)
+
+			// Update TargetNode
+			podMigration.Spec.TargetNode = dummyPod.Spec.NodeName
+			if err := r.Update(ctx, podMigration); err != nil {
+				return ctrl.Result{}, fmt.Errorf("failed to update podMigration TargetNode: %w", err)
+			}
+
+			// Delete dummy pod
+			if err := r.Delete(ctx, &dummyPod); err != nil {
+				logger.Error(err, "Failed to delete dummy pod")
+			}
+
+			// Requeue to proceed with PrePullImages
+			return ctrl.Result{Requeue: true}, nil
+		}
+
+		// Still waiting for scheduler
+		logger.Info("Waiting for dummy pod to be scheduled")
+		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
+	}
+
+	// Trigger image pulling if not already started
+	if podMigration.Status.EphemeralPullPodName == "" {
 		// Collect all images from containers and initContainers
 		imagesToPull := []string{}
 		for _, c := range append(originalPod.Spec.Containers, originalPod.Spec.InitContainers...) {
@@ -120,9 +201,7 @@ func (r *PodMigrationReconciler) handlePrePullImagesPhase(ctx context.Context, p
 			return ctrl.Result{}, fmt.Errorf("failed to update podMigration status: %w", err)
 		}
 		return ctrl.Result{RequeueAfter: 3 * time.Second}, nil
-	}
-
-	// Check pull status
+	} // Check pull status
 	pullStatus, err := r.Puller.CheckPullStatusAndCleanup(ctx, podMigration.Status.EphemeralPullPodName)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to check pull pod status: %w", err)

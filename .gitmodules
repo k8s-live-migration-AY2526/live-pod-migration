@@ -7,3 +7,6 @@
 [submodule "dependencies/runc"]
 	path = dependencies/runc
 	url = https://github.com/k8s-live-migration-AY2526/runc.git
+[submodule "dependencies/descheduler"]
+	path = dependencies/descheduler
+	url = https://github.com/k8s-live-migration-AY2526/descheduler.git

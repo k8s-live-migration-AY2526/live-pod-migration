@@ -40,7 +40,8 @@ type PodMigrationSpec struct {
 	PodName string `json:"podName"`
 
 	// TargetNode is the name of the node where the Pod should be restored.
-	TargetNode string `json:"targetNode"`
+	// +optional
+	TargetNode string `json:"targetNode,omitempty"`
 
 	// When set to true, will defer termination to after restored
 	DeferTermination bool `json:"deferTermination,omitempty"`
