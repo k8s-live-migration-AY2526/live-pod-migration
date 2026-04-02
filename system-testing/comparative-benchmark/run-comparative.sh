@@ -1,11 +1,22 @@
 #!/bin/bash
 set -e
 
-# Argument: Path to the descheduler binary
+# --- Argument Handling ---
+if [ -z "$1" ]; then
+    echo "Usage: ./run-comparative.sh <path-to-descheduler-binary> [start-time-seconds]"
+    exit 1
+fi
+
 BINARY_PATH=$1
-START_TIME=$2
+# Default to 30 seconds if $2 is not provided
+START_TIME=${2:-30} 
 POLICY_FILE="policy.yaml"
 POD_NAME="benchmark-cpu-0"
+
+if [ ! -f "$BINARY_PATH" ]; then
+    echo "ERROR: Binary not found at $BINARY_PATH"
+    exit 1
+fi
 
 # --- Functions ---
 
@@ -19,25 +30,18 @@ setup_environment() {
     kubectl label node k8s-worker color=red --overwrite >/dev/null
     kubectl label node k8s-worker2 color=blue --overwrite >/dev/null
     
-    # 2. Deploy Benchmark Pod
-    # Ensure fresh start on worker2: Delete STS and any lingering pods/jobs/migrations
+    # 2. Cleanup Previous Runs
     echo "Cleaning up previous runs..."
     kubectl delete statefulset benchmark-cpu --wait=true 2>/dev/null || true
     kubectl delete job --all 2>/dev/null || true
     kubectl delete podmigration --all 2>/dev/null || true
-    kubectl delete pod --all --force --grace-period=0 2>/dev/null || true
-    
-    # Wait for everything to be gone
+    kubectl delete pod --all 2>/dev/null || true
+    kubectl delete pvc bench benchmark-pvc --wait=true 2>/dev/null || true
+    # Wait for everything to be cleanly removed
     sleep 5
-    
-    # Create YAML with affinity if not exists
-    cat benchmark-cpu.yaml > benchmark-affinity.yaml
     
     echo "Deploying Workload..."
     kubectl apply -f benchmark-cpu.yaml
-    
-    # Patch affinity: Required color=blue
-    kubectl patch statefulset benchmark-cpu --type='json' -p='[{"op": "add", "path": "/spec/template/spec/affinity", "value": {"nodeAffinity": {"requiredDuringSchedulingIgnoredDuringExecution": {"nodeSelectorTerms": [{"matchExpressions": [{"key": "color", "operator": "In", "values": ["blue"]}]}]}}}}]'
     
     echo "Waiting for pod ready..."
     kubectl wait --for=condition=Ready pod/$POD_NAME --timeout=90s
@@ -45,7 +49,7 @@ setup_environment() {
     # Verify it is on worker2
     NODE=$(kubectl get pod $POD_NAME -o jsonpath='{.spec.nodeName}')
     if [[ "$NODE" != "k8s-worker2" ]]; then
-        echo "ERROR: Pod started on $NODE, expected k8s-worker2. Check labels/taints."
+        echo "ERROR: Pod started on $NODE, expected k8s-worker2. Check labels/taints or YAML affinity."
         exit 1
     fi
     echo "Pod verified on $NODE."
@@ -88,20 +92,14 @@ measure_downtime() {
     trigger_descheduling
     
     echo "Running Descheduler..."
-    # Run descheduler (assuming it does one pass or runs for a short time)
-    # We use timeout to ensure it doesn't run forever if it's a loop
     timeout 60s $DESCHEDULER_CMD --policy-config-file $POLICY_FILE --v=3 --kubeconfig "$HOME/.kube/config" --dry-run=false 2>&1 | tee descheduler.log &
     
-    echo "Descheduler running. Waiting for pod migration/restart..."
-    # Wait for the pod to execute the move. 
-    # Since we changed labels, descheduler should evict/migrate.
-    # If Evict: Pod terminates, Scheduler sees only k8s-worker as blue, places it there.
-    # If Migrate: PodMigration created, moves to k8s-worker.
+    echo "Descheduler running. Waiting for pod eviction and recreation..."
     
     # Wait for pod to settle on k8s-worker
-    # We loop checking node name
     for i in {1..60}; do
-        NEW_NODE=$(kubectl get pod $POD_NAME -o jsonpath='{.spec.nodeName}' 2>/dev/null || echo "Pending")
+        NEW_NODE=$(kubectl get pod $POD_NAME -o jsonpath='{if not .metadata.deletionTimestamp}{.spec.nodeName}{end}' 2>/dev/null || echo "Pending")
+        
         if [[ "$NEW_NODE" == "k8s-worker" ]]; then
             echo "Pod successfully moved to k8s-worker."
             break
@@ -109,20 +107,20 @@ measure_downtime() {
         sleep 2
     done
     
-    # Wait for ready
+    # Wait for the new pod to be completely ready
     kubectl wait --for=condition=Ready pod/$POD_NAME --timeout=90s || true
     
-    # --- Wait for NEW Serving Request ---
+    # --- Wait for NEW Serving Requests ---
+    echo "Waiting ${START_TIME}s to collect post-migration logs..."
     sleep $START_TIME
 
     echo "Fetching logs..."
     kubectl exec $POD_NAME -- cat /data/benchmark.log > benchmark.log 2>/dev/null
     
     echo "Analyzing downtime..."
-        python3 -c '
+    python3 -c '
 import sys
 
-# Standard analysis script from previous steps
 last_ts = 0
 max_gap = 0
 try:
@@ -140,25 +138,11 @@ try:
             last_ts = timestamp
             
     print(f"Max Downtime: {max_gap:.4f}s")
-except:
-    print("Error parsing logs")
+except Exception as e:
+    print(f"Error parsing logs: {e}")
 '
 }
 
-# --- Main ---
-
-if [ -z "$1" ]; then
-    echo "Usage: ./run-comparative.sh <path-to-descheduler-binary>"
-    exit 1
-fi
-
-BINARY_PATH=$1
-
-if [ ! -f "$BINARY_PATH" ]; then
-    echo "Binary not found: $BINARY_PATH"
-    exit 1
-fi
-
+# --- Main Execution ---
 measure_downtime "$BINARY_PATH" "Descheduler Benchmark"
-
 echo "Benchmark Complete."

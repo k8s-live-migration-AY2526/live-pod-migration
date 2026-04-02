@@ -3,6 +3,9 @@ kind: DeschedulerPolicy
 profiles:
   - name: comparative-benchmark
     pluginConfig:
+      - name: "DefaultEvictor"
+        args:
+          ignorePvcPods: false
       - name: "RemovePodsViolatingNodeAffinity"
         args:
           nodeAffinityType:
