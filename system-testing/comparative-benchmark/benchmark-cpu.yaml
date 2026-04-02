@@ -51,7 +51,7 @@ data:
     print(f"[{time.strftime('%X')}] Starting Server...", flush=True)
 
     # Initialize log file
-    with open(LOG_PATH, "w") as log:
+    with open(LOG_PATH, "a") as log:
         log.write(f"{time.time():.4f} STARTED\n")
         
     print(f"[{time.strftime('%X')}] Performing Initialization ({TARGET_STARTUP_TIME}s)...", flush=True)
@@ -108,7 +108,15 @@ spec:
       labels:
         app: benchmark-cpu
     spec:
-      terminationGracePeriodSeconds: 0
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: color
+                operator: In
+                values:
+                - blue
       containers:
       - name: cpu-app
         image: python:3.9-alpine
