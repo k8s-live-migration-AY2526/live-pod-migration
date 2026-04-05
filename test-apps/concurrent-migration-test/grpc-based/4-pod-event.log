@@ -1,0 +1,40 @@
+2026-04-05T13:29:11Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:29:11Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:29:11Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:29:11Z        Created container: memhog
+2026-04-05T13:29:11Z        Created container: memhog
+2026-04-05T13:29:11Z        Started container memhog
+2026-04-05T13:29:11Z        Started container memhog
+2026-04-05T13:29:12Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:29:12Z        Created container: memhog
+2026-04-05T13:29:12Z        Created container: memhog
+2026-04-05T13:29:12Z        Started container memhog
+2026-04-05T13:29:12Z        Started container memhog
+2026-04-05T13:29:41Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:29:41Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:29:41Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:29:41Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:29:41Z        Created container: puller-0
+2026-04-05T13:29:41Z        Created container: puller-0
+2026-04-05T13:29:41Z        Created container: puller-0
+2026-04-05T13:29:41Z        Created container: puller-0
+2026-04-05T13:29:41Z        Started container puller-0
+2026-04-05T13:29:41Z        Started container puller-0
+2026-04-05T13:29:41Z        Started container puller-0
+2026-04-05T13:29:41Z        Started container puller-0
+2026-04-05T13:30:05Z        Container image "localhost/checkpoint:23beb1d7-04da-4ae7-89ec-b450f69a3486-memhog-20260405-132945" already present on machine
+2026-04-05T13:30:05Z        Created container: memhog
+2026-04-05T13:30:08Z        Started container memhog
+2026-04-05T13:30:45Z        Container image "localhost/checkpoint:6a895a1e-5622-4e36-b008-7f20689c8bf0-memhog-20260405-132947" already present on machine
+2026-04-05T13:30:45Z        Container image "localhost/checkpoint:a4abf560-2f01-4246-ba1a-956fef8b6dee-memhog-20260405-132949" already present on machine
+2026-04-05T13:30:45Z        Container image "localhost/checkpoint:d52c82bf-a419-4c10-8dd7-0c09974afee2-memhog-20260405-132951" already present on machine
+2026-04-05T13:30:45Z        Created container: memhog
+2026-04-05T13:30:45Z        Created container: memhog
+2026-04-05T13:30:45Z        Stopping container memhog
+2026-04-05T13:30:46Z        Created container: memhog
+2026-04-05T13:30:48Z        Started container memhog
+2026-04-05T13:30:50Z        Started container memhog
+2026-04-05T13:30:50Z        Started container memhog
+2026-04-05T13:30:51Z        Stopping container memhog
+2026-04-05T13:30:55Z        Stopping container memhog
+2026-04-05T13:30:55Z        Stopping container memhog

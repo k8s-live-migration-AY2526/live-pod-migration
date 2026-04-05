@@ -1,0 +1,20 @@
+2026-04-05T13:24:43Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:24:44Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:24:44Z        Created container: memhog
+2026-04-05T13:24:44Z        Created container: memhog
+2026-04-05T13:24:44Z        Started container memhog
+2026-04-05T13:24:44Z        Started container memhog
+2026-04-05T13:25:03Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:25:03Z        Container image "python:3.12-alpine" already present on machine
+2026-04-05T13:25:03Z        Created container: puller-0
+2026-04-05T13:25:03Z        Created container: puller-0
+2026-04-05T13:25:03Z        Started container puller-0
+2026-04-05T13:25:03Z        Started container puller-0
+2026-04-05T13:25:33Z        Container image "localhost/checkpoint:8dfab6f6-e0e1-4106-9e40-69b8b2c0ce8e-memhog-20260405-132510" already present on machine
+2026-04-05T13:25:33Z        Created container: memhog
+2026-04-05T13:25:37Z        Started container memhog
+2026-04-05T13:25:55Z        Container image "localhost/checkpoint:1884402f-261e-4db0-86c6-b36f05cce759-memhog-20260405-132512" already present on machine
+2026-04-05T13:25:55Z        Created container: memhog
+2026-04-05T13:25:55Z        Stopping container memhog
+2026-04-05T13:25:56Z        Started container memhog
+2026-04-05T13:26:01Z        Stopping container memhog

@@ -1,0 +1,16 @@
+NAME       READY   STATUS    RESTARTS   AGE   IP           NODE         NOMINATED NODE   READINESS GATES
+memhog-1   1/1     Running   0          7s    10.244.0.5   k8s-master   <none>           <none>
+pull-k8s-worker-memhog-1-ff824213   0/1     Pending   0          0s    <none>       k8s-worker   <none>           <none>
+pull-k8s-worker-memhog-1-ff824213   0/1     ContainerCreating   0          0s    <none>       k8s-worker   <none>           <none>
+pull-k8s-worker-memhog-1-ff824213   1/1     Running             0          1s    10.244.1.4   k8s-worker   <none>           <none>
+pull-k8s-worker-memhog-1-ff824213   0/1     Completed           0          2s    10.244.1.4   k8s-worker   <none>           <none>
+pull-k8s-worker-memhog-1-ff824213   0/1     Completed           0          4s    10.244.1.4   k8s-worker   <none>           <none>
+pull-k8s-worker-memhog-1-ff824213   0/1     Terminating         0          6s    10.244.1.4   k8s-worker   <none>           <none>
+pull-k8s-worker-memhog-1-ff824213   0/1     Terminating         0          6s    10.244.1.4   k8s-worker   <none>           <none>
+memhog-1-restored                   0/1     Pending             0          0s    <none>       k8s-worker   <none>           <none>
+memhog-1-restored                   0/1     ContainerCreating   0          0s    <none>       k8s-worker   <none>           <none>
+memhog-1-restored                   1/1     Running             0          4s    10.244.1.5   k8s-worker   <none>           <none>
+memhog-1                            1/1     Terminating         0          2m39s   10.244.0.5   k8s-master   <none>           <none>
+memhog-1                            0/1     Terminating         0          3m9s    10.244.0.5   k8s-master   <none>           <none>
+memhog-1                            0/1     Terminating         0          3m10s   10.244.0.5   k8s-master   <none>           <none>
+memhog-1                            0/1     Terminating         0          3m10s   10.244.0.5   k8s-master   <none>           <none>
