@@ -28,6 +28,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	lpmv1 "my.domain/guestbook/api/v1"
@@ -565,6 +566,9 @@ func (r *PodMigrationReconciler) getOriginalPod(ctx context.Context, podMigratio
 func (r *PodMigrationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&lpmv1.PodMigration{}).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: 5,
+		}).
 		Named("podmigration").
 		Complete(r)
 }
