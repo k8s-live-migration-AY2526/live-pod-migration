@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	lpmv1 "my.domain/guestbook/api/v1"
@@ -164,6 +165,9 @@ func (r *ContainerCheckpointReconciler) updatePhase(ctx context.Context, contain
 func (r *ContainerCheckpointReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&lpmv1.ContainerCheckpoint{}).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: 5,
+		}).
 		Owns(&lpmv1.ContainerCheckpointContent{}).
 		Named("containercheckpoint").
 		Complete(r)

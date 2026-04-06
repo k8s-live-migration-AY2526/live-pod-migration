@@ -492,7 +492,6 @@ func (r *CheckpointReconciler) copyToSharedStorage(podUID, containerName, localP
 type PodRestoreReconciler struct {
 	client.Client
 	NodeName     string
-	buildahMutex sync.Mutex
 }
 
 // Reconcile processes PodRestore events
@@ -673,10 +672,6 @@ func (r *PodRestoreReconciler) convertCheckpointToOCI(ctx context.Context, check
 
 	// Common buildah flags to use the mounted container storage
 	buildahFlags := []string{"--root", "/var/lib/containers/storage"}
-
-	// Serialize buildah operations to prevent storage contention
-	r.buildahMutex.Lock()
-	defer r.buildahMutex.Unlock()
 
 	// Create a working container from scratch
 	cmd := exec.Command("buildah", append(buildahFlags, "from", "scratch")...)
