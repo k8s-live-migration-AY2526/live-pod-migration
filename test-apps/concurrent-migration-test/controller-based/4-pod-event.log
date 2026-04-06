@@ -1,0 +1,38 @@
+2026-04-06T08:15:39Z        Container image "python:3.12-alpine" already present on machine
+2026-04-06T08:15:39Z        Container image "python:3.12-alpine" already present on machine
+2026-04-06T08:15:39Z        Created container: memhog
+2026-04-06T08:15:39Z        Created container: memhog
+2026-04-06T08:15:39Z        Started container memhog
+2026-04-06T08:15:39Z        Started container memhog
+2026-04-06T08:15:40Z        Container image "python:3.12-alpine" already present on machine
+2026-04-06T08:15:40Z        Container image "python:3.12-alpine" already present on machine
+2026-04-06T08:15:40Z        Created container: memhog
+2026-04-06T08:15:40Z        Created container: memhog
+2026-04-06T08:15:40Z        Started container memhog
+2026-04-06T08:15:40Z        Started container memhog
+2026-04-06T08:15:45Z        Container image "python:3.12-alpine" already present on machine
+2026-04-06T08:15:45Z        Container image "python:3.12-alpine" already present on machine
+2026-04-06T08:15:45Z        Container image "python:3.12-alpine" already present on machine
+2026-04-06T08:15:45Z        Container image "python:3.12-alpine" already present on machine
+2026-04-06T08:15:45Z        Created container: puller-0
+2026-04-06T08:15:45Z        Created container: puller-0
+2026-04-06T08:15:45Z        Created container: puller-0
+2026-04-06T08:15:45Z        Created container: puller-0
+2026-04-06T08:15:45Z        Started container puller-0
+2026-04-06T08:15:45Z        Started container puller-0
+2026-04-06T08:15:45Z        Started container puller-0
+2026-04-06T08:15:45Z        Started container puller-0
+2026-04-06T08:16:06Z        Attempting to reclaim ephemeral-storage
+2026-04-06T08:16:13Z        Node k8s-master status is now: NodeHasDiskPressure
+2026-04-06T08:16:20Z        Container image "localhost/checkpoint:7d30df29-48cd-494b-b3ae-1db60a2f3750-memhog-20260406-081557" already present on machine
+2026-04-06T08:16:20Z        Created container: memhog
+2026-04-06T08:16:23Z        Started container memhog
+2026-04-06T08:16:34Z        Container image "localhost/checkpoint:1421f8c5-a725-44a8-be19-e3202218081a-memhog-20260406-081558" already present on machine
+2026-04-06T08:16:34Z        Created container: memhog
+2026-04-06T08:16:36Z        Started container memhog
+2026-04-06T08:16:48Z        Container image "localhost/checkpoint:43996e84-468b-4783-a598-f55b7af4a08f-memhog-20260406-081556" already present on machine
+2026-04-06T08:16:48Z        Created container: memhog
+2026-04-06T08:16:50Z        Started container memhog
+2026-04-06T08:17:01Z        Container image "localhost/checkpoint:e2d72c64-2453-4cce-ab9a-097ee75ecbee-memhog-20260406-081558" already present on machine
+2026-04-06T08:17:01Z        Created container: memhog
+2026-04-06T08:17:02Z        Started container memhog

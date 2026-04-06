@@ -1,0 +1,45 @@
+"2026-04-06T09:06:58Z        Container image ""python:3.12-alpine"" already present on machine
+2026-04-06T09:06:59Z        Container image ""python:3.12-alpine"" already present on machine
+2026-04-06T09:06:59Z        Container image ""python:3.12-alpine"" already present on machine
+2026-04-06T09:06:59Z        Container image ""python:3.12-alpine"" already present on machine
+2026-04-06T09:06:59Z        Container image ""python:3.12-alpine"" already present on machine
+2026-04-06T09:06:59Z        Created container: memhog
+2026-04-06T09:06:59Z        Created container: memhog
+2026-04-06T09:06:59Z        Created container: memhog
+2026-04-06T09:06:59Z        Created container: memhog
+2026-04-06T09:06:59Z        Created container: memhog
+2026-04-06T09:06:59Z        Started container memhog
+2026-04-06T09:06:59Z        Started container memhog
+2026-04-06T09:06:59Z        Started container memhog
+2026-04-06T09:06:59Z        Started container memhog
+2026-04-06T09:06:59Z        Started container memhog
+2026-04-06T09:07:08Z        Container image ""python:3.12-alpine"" already present on machine
+2026-04-06T09:07:08Z        Container image ""python:3.12-alpine"" already present on machine
+2026-04-06T09:07:08Z        Container image ""python:3.12-alpine"" already present on machine
+2026-04-06T09:07:08Z        Container image ""python:3.12-alpine"" already present on machine
+2026-04-06T09:07:08Z        Container image ""python:3.12-alpine"" already present on machine
+2026-04-06T09:07:08Z        Created container: puller-0
+2026-04-06T09:07:08Z        Created container: puller-0
+2026-04-06T09:07:08Z        Created container: puller-0
+2026-04-06T09:07:08Z        Created container: puller-0
+2026-04-06T09:07:08Z        Created container: puller-0
+2026-04-06T09:07:08Z        Started container puller-0
+2026-04-06T09:07:08Z        Started container puller-0
+2026-04-06T09:07:08Z        Started container puller-0
+2026-04-06T09:07:08Z        Started container puller-0
+2026-04-06T09:07:08Z        Started container puller-0
+2026-04-06T09:08:36Z        Container image ""localhost/checkpoint:0c462899-761b-48f6-9f7f-1cdbca92365e-memhog-20260406-090715"" already present on machine
+2026-04-06T09:08:36Z        Container image ""localhost/checkpoint:3dafef4d-017e-4222-8abe-8ce082188d21-memhog-20260406-090718"" already present on machine
+2026-04-06T09:08:36Z        Container image ""localhost/checkpoint:53a1677a-d895-448f-98d2-c09e4cebe795-memhog-20260406-090715"" already present on machine
+2026-04-06T09:08:36Z        Container image ""localhost/checkpoint:a92d6589-a3fc-4a44-9620-a151c76479cb-memhog-20260406-090719"" already present on machine
+2026-04-06T09:08:36Z        Container image ""localhost/checkpoint:ce5b9258-0f80-4bdb-a25a-5a9e1f2073d8-memhog-20260406-090715"" already present on machine
+2026-04-06T09:08:36Z        Created container: memhog
+2026-04-06T09:08:36Z        Created container: memhog
+2026-04-06T09:08:36Z        Created container: memhog
+2026-04-06T09:08:36Z        Created container: memhog
+2026-04-06T09:08:36Z        Created container: memhog
+2026-04-06T09:08:38Z        Started container memhog
+2026-04-06T09:08:41Z        Started container memhog
+2026-04-06T09:08:42Z        Started container memhog
+2026-04-06T09:08:42Z        Started container memhog
+2026-04-06T09:08:42Z        Started container memhog"
