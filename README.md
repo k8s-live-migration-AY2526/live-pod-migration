@@ -2,11 +2,9 @@
 
 A Kubernetes-native controller that enables live migration of running pods between cluster nodes using CRIU (Checkpoint/Restore In Userspace) technology. The system performs checkpoint operations on source nodes and restores pod state on destination nodes while preserving process memory, file descriptors, and application state.
 
-Note that the documention on this page might not be up-to-date. A summary of this project (as of March 2026) is attached [here](https://docs.google.com/document/d/1ZVfnZeKAxfwW873oCq-5oaHG73-I7a3ynwKDx3fslcg/edit?usp=sharing)
-
 ## Description
 
-The Live Pod Migration Controller implements a complete control-plane and node agent architecture for migrating stateful workloads across Kubernetes cluster nodes. It provides three main capabilities:
+The Live Pod Migration Controller implements a complete control-plane and node agent architecture for migrating stateful workloads across Kubernetes cluster nodes. It uses a phased approach and delegates specialized tasks to dedicated controllers. It provides three main capabilities:
 
 **🔄 Container-Level Checkpointing**: Create point-in-time snapshots of individual containers within pods, capturing process state, memory contents, and file descriptors.
 
@@ -16,34 +14,35 @@ The Live Pod Migration Controller implements a complete control-plane and node a
 
 ### Key Features
 
-- **Process State Preservation**: Maintains running processes, memory contents, and file descriptors across migration
-- **Kubernetes-Native**: Uses standard CRDs and APIs without requiring kubelet or container runtime modifications  
-- **Cross-Node Migration**: Supports pod movement between any nodes in the cluster
-- **CRIU Integration**: Leverages CRIU checkpoint/restore technology with OCI image packaging
-- **Shared Storage**: NFS-based checkpoint storage enables cross-node restoration
+- **Process State Preservation**: Maintains running processes, memory contents, and file descriptors across migration.
+- **Kubernetes-Native**: Uses standard CRDs and APIs, follows Kubernetes design patterns.
+- **Cross-Node Migration**: Supports pod movement between any nodes in the cluster.
+- **Scheduler-Driven Placement**: Supports migration without a pre-defined target node, allowing the standard Kubernetes scheduler to determine the optimal destination node.
+- **CRIU Integration**: Leverages CRIU checkpoint/restore technology with OCI image packaging.
 
 ### Architecture Components
 
-- **PodMigration Controller**: Orchestrates end-to-end pod migration workflows
-- **PodCheckpoint Controller**: Manages pod-level checkpoint operations across multiple containers  
-- **ContainerCheckpoint Controller**: Handles individual container checkpoint lifecycle
-- **Checkpoint Agent**: Privileged DaemonSet that interfaces with kubelet checkpoint API and CRIU
-- **Storage Integration**: Pluggable storage backends for checkpoint artifacts (local, PVC, object storage)
+- **PodMigration Controller**: Orchestrates the end-to-end migration lifecycle (phases: PrePullImages, Pending, Checkpointing, Restoring, etc.).
+- **PodCheckpoint Controller**: Manages pod-level checkpoint operations across multiple containers.
+- **ContainerCheckpoint Controller**: Handles individual container checkpoint lifecycle.
+- **PodRestore Controller**: Manages the restoration of a pod from checkpoints on a target node.
+- **Checkpoint Agent**: Privileged DaemonSet that interfaces with kubelet checkpoint API and CRIU.
+- **Storage Integration**: Pluggable storage backends for checkpoint artifacts (local, PVC, object storage).
 
 ### Use Cases
 
-- **Node Maintenance**: Drain nodes for updates while preserving long-running job state
-- **Resource Optimization**: Move workloads to optimize cluster resource utilization
-- **Disaster Recovery**: Create portable checkpoints for cross-cluster recovery scenarios
-- **Development/Testing**: Capture and replay application states for debugging and testing
+- **Node Maintenance**: Drain nodes for updates while preserving long-running job state.
+- **Resource Optimization**: Move workloads to optimize cluster resource utilization.
+- **Disaster Recovery**: Create portable checkpoints for cross-cluster recovery scenarios.
+- **Development/Testing**: Capture and replay application states for debugging and testing.
 
 ## Demo
 
 🎥 **Live Pod Migration in Action** - Watch real-time process state preservation across Kubernetes nodes:
 
-[![Live Pod Migration Demo](https://img.youtube.com/vi/-9zZG_GNruo/0.jpg)](https://www.youtube.com/watch?v=-9zZG_GNruo)
+[![Live Pod Migration Demo](./docs/images/demoThumbnail.png)](https://drive.google.com/file/d/188jahZqDNSb7lUr4gAqEAxEzfgqKXZvc/view?usp=sharing)
 
-*Click the thumbnail above to see the complete migration workflow with counter state preservation.*
+*Watch the complete migration workflow above.*
 
 ## Quick Start
 
@@ -59,10 +58,10 @@ For a complete setup guide including CRIU configuration and testing instructions
      name: my-migration
    spec:
      podName: my-app-pod
-     targetNode: target-node-name
+     targetNode: target-node-name # Optional: omit for scheduler-driven placement
    ```
-2. **Monitor progress** with `kubectl get podmigration my-migration -w`
-3. **Verify restored pod** maintains application state from checkpoint
+2. **Monitor progress** with `kubectl get podmigration my-migration`. You will see the migration progress through phases such as `PrePullImages`, `Pending`, `Checkpointing`, `Restoring`, and `Succeeded`.
+3. **Verify restored pod** maintains application state from the checkpoint.
 
 ## Project Structure
 
@@ -77,14 +76,15 @@ For a complete setup guide including CRIU configuration and testing instructions
 │   ├── agent/                       # DaemonSet and RBAC for agents
 │   └── samples/                     # Example resources
 ├── vagrant/                         # Development environment setup
-└── README-TESTING.md               # Comprehensive testing guide
+└── README-TESTING.md                # Comprehensive testing guide
 ```
 
 ## Documentation
 
-- **[Testing Guide](./README-TESTING.md)**: Complete setup, testing, and troubleshooting instructions
-- **[Storage Plan](docs/CHECKPOINT-STORAGE-PLAN.md)**: Design for shared storage implementation
-- **API Reference**: Generated CRD documentation (see `config/crd/bases/`)
+- **[Technical Overview](./OVERVIEW.md)**: Detailed technical architecture, CRDs, and workflow.
+- **[Testing Guide](./README-TESTING.md)**: Complete setup, testing, and troubleshooting instructions.
+- **[Storage Plan](docs/CHECKPOINT-STORAGE-PLAN.md)**: Design for shared storage implementation.
+- **API Reference**: Generated CRD documentation (see `config/crd/bases/`).
 
 ## Getting Started
 
@@ -98,24 +98,25 @@ For complete installation, configuration, and testing instructions, see **[READM
 ## Roadmap
 
 ### Current Features (v1.0)
-- ✅ **Live Pod Migration**: Complete cross-node migration with process state preservation
-- ✅ **Container Checkpointing**: Individual container checkpoint/restore via kubelet API
-- ✅ **Pod-Level Migration**: Multi-container pod migration orchestration
-- ✅ **OCI Image Integration**: Checkpoint packaging as standard OCI images  
-- ✅ **Shared Storage**: NFS-based checkpoint storage for cross-node access
-- ✅ **CRI-O Integration**: Automatic checkpoint restoration via container runtime annotations
+- ✅ **Live Pod Migration**: Complete cross-node migration with process state preservation.
+- ✅ **Container Checkpointing**: Individual container checkpoint/restore via kubelet API.
+- ✅ **Pod-Level Migration**: Multi-container pod migration orchestration.
+- ✅ **Pod Restoration**: Dedicated controller for orchestrating pod rebuilds from checkpoints.
+- ✅ **Scheduler-Driven Placement**: Optional target node allowing native kube-scheduler logic.
+- ✅ **OCI Image Integration**: Checkpoint packaging as standard OCI images.
+- ✅ **CRI-O Integration**: Automatic checkpoint restoration via container runtime annotations.
 
 ### Planned Features  
-- 🔄 **Incremental Checkpoints**: Delta-based storage for large containers
-- 🔄 **Cross-Cluster Migration**: Portable checkpoints for disaster recovery
-- 🔄 **Performance Optimization**: Compression, deduplication, and streaming
-- 🔄 **Network State Migration**: Advanced TCP connection restoration
+- 🔄 **Incremental Checkpoints**: Delta-based storage for large containers.
+- 🔄 **Cross-Cluster Migration**: Portable checkpoints for disaster recovery.
+- 🔄 **Performance Optimization**: Compression, deduplication, and streaming.
+- 🔄 **Network State Migration**: Advanced TCP connection restoration.
 
 ### Long-term Vision
-- 🎯 **Production Hardening**: HA storage, encryption, multi-tenancy
-- 🎯 **Advanced Scheduling**: Migration-aware pod placement
-- 🎯 **Observability**: Comprehensive metrics and distributed tracing
-- 🎯 **Cloud Integration**: Native support for cloud storage backends
+- 🎯 **Production Hardening**: HA storage, encryption, multi-tenancy.
+- 🎯 **Advanced Scheduling**: Migration-aware pod placement.
+- 🎯 **Observability**: Comprehensive metrics and distributed tracing.
+- 🎯 **Cloud Integration**: Native support for cloud storage backends.
 
 ## Contributing
 
@@ -127,17 +128,17 @@ We welcome contributions! This project is part of CP4101 coursework but aims to 
 3. Follow the [Testing Guide](./README-TESTING.md) for local development
 
 ### Areas for Contribution
-- **Storage Backends**: Implement additional checkpoint storage options
-- **Testing**: Expand test coverage and performance benchmarks  
-- **Documentation**: Improve API documentation and user guides
-- **Performance**: Optimize checkpoint/restore performance
-- **Security**: Enhance multi-tenancy and encryption features
+- **Storage Backends**: Implement additional checkpoint storage options.
+- **Testing**: Expand test coverage and performance benchmarks.
+- **Documentation**: Improve API documentation and user guides.
+- **Performance**: Optimize checkpoint/restore performance.
+- **Security**: Enhance multi-tenancy and encryption features.
 
 For detailed development and testing instructions, see [README-TESTING.md](./README-TESTING.md).
 
 ## License
 
-Copyright 2025.
+Copyright 2025-2026.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -150,4 +151,3 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-
