@@ -6,7 +6,7 @@ This system implements a complete control-plane and node agent architecture for 
 
 ## Architecture
 
-- **Control-Plane Operator**: Runs PodMigration, PodCheckpoint, ContainerCheckpoint reconcilers
+- **Control-Plane Operator**: Runs PodMigration, PodCheckpoint, ContainerCheckpoint, and PodRestore reconcilers
 - **Node Checkpoint Agent**: Privileged DaemonSet that performs checkpoint/restore operations via gRPC
 
 ## Prerequisites
@@ -19,6 +19,9 @@ This system implements a complete control-plane and node agent architecture for 
     - **POSIX-like semantics** to preserve the CRIU artifacts correctly
 
 ## Quick Start
+
+### 0. Prepare cluster
+See [vagrant/README.md](./vagrant/README.md)
 
 ### 1. Build and Deploy
 
@@ -40,6 +43,9 @@ sudo buildah bud -t localhost/checkpoint-agent:latest -f Dockerfile.agent .
 
 # Deploy the system (includes CRDs, RBAC, controller, and agent DaemonSet)
 make deploy IMG=localhost/controller:latest AGENT_IMG=localhost/checkpoint-agent:latest
+
+# Setup webhook
+./scripts/setup-webhook.sh
 ```
 
 ### 2. Verify Deployment
@@ -57,6 +63,8 @@ kubectl logs -n live-pod-migration-controller-system -l app=checkpoint-agent
 # Check controller logs (note the prefix is "lpm-" not "live-pod-migration-controller-")
 kubectl logs -n live-pod-migration-controller-system deployment/lpm-controller-manager
 ```
+
+**Note**: You can then choose different test scenarios we provide in [system-testing/](./system-testing/), where each scenario will contain its respective testing details. The following is a lower-level testing of individual components.
 
 ### 3. Troubleshooting
 
@@ -153,16 +161,6 @@ kubectl get podcheckpointcontent
 ```
 
 ### 6. Test Live Pod Migration with Process State Verification
-
-**IMPORTANT**: This test requires CRIU 4.1.1+ for ARM64 compatibility. If using CRIU 3.16.1, upgrade first:
-
-```bash
-# Upgrade CRIU on both nodes
-sudo add-apt-repository -y ppa:criu/ppa
-sudo apt update && sudo apt upgrade criu -y
-sudo systemctl restart crio
-criu --version  # Should show 4.1.1 or higher
-```
 
 **Working Migration Test**:
 
@@ -264,6 +262,12 @@ fi
 # Clean up
 kubectl delete pod counter-migration-test counter-migration-test-restored --ignore-not-found=true
 kubectl delete podmigration counter-migration --ignore-not-found=true
+
+# Optional: Test Scheduler-Driven Migration (No targetNode specified)
+# You can repeat the steps above but omit `targetNode: k8s-master` from the PodMigration CR:
+# spec:
+#   podName: counter-migration-test
+#   # targetNode is omitted to allow kube-scheduler to determine placement
 ```
 
 **Expected Results**:
@@ -351,16 +355,24 @@ kubectl logs -n live-pod-migration-controller-system -l app=checkpoint-agent | g
 
 ### PodMigration Workflow
 1. **PodMigration** orchestrates the complete migration process:
-   - `Pending` → validates source pod exists and is running
-   - `CheckpointInProgress` → creates PodCheckpoint for the source pod
-   - `CheckpointCompleted` → waits for checkpoint to complete successfully
-   - `MigrationInProgress` → schedules pod on destination node (if specified)
-   - `RestoreInProgress` → restores pod from checkpoint on destination node
-   - `Succeeded` → migration completed, source pod terminated
+   - `PrePullImages` → Pulls container images on the target node using an ephemeral pull pod to minimize downtime.
+   - `Pending` → Initial state, validates source pod exists and is running, applies freeze annotation.
+   - `Checkpointing` → Creates PodCheckpoint for the source pod.
+   - `CheckpointComplete` → Indicates the checkpoint artifact is available.
+   - `Restoring` → Creates PodRestore CR to orchestrate the recreation of the pod on the destination node.
+   - `Succeeded` → Migration completed, source pod terminated.
+   - `Failed` → Migration failed, recovery logic is triggered (e.g., removing freeze annotation).
 
 2. **Cross-Node Capability**: Checkpoint files stored in shared storage enable migration between any nodes in the cluster
 
-3. **Automatic Scheduling**: If no destination node specified, scheduler selects optimal target node
+3. **Scheduler-Driven Placement**: If `targetNode` is omitted, the Kubernetes scheduler natively selects the optimal target node.
+
+### PodRestore Workflow
+1. **PodRestore** handles the recreation of a pod from checkpoints:
+   - Validates existence of the checkpoint artifacts.
+   - Coordinates with node agents to prepare images if a target node is specified.
+   - Restores the pod using checkpoint annotations (e.g., CRI-O checkpoint-restore).
+   - Re-establishes ownership (e.g., StatefulSet, Deployment) if applicable.
 
 ### Shared Storage Behavior
 1. **NFS-based Storage**: Uses NFS for ReadWriteMany access
@@ -556,6 +568,7 @@ kubectl delete containercheckpoint --all --all-namespaces --ignore-not-found=tru
 kubectl delete podcheckpoint --all --all-namespaces --ignore-not-found=true
 kubectl delete containercheckpointcontent --all --all-namespaces --ignore-not-found=true
 kubectl delete podcheckpointcontent --all --all-namespaces --ignore-not-found=true
+kubectl delete podrestore --all --all-namespaces --ignore-not-found=true
 
 # 2. Delete all sample resources
 kubectl delete -f config/samples/ --ignore-not-found=true
@@ -575,6 +588,7 @@ kubectl delete crd containercheckpoints.lpm.my.domain --ignore-not-found=true
 kubectl delete crd podcheckpoints.lpm.my.domain --ignore-not-found=true
 kubectl delete crd containercheckpointcontents.lpm.my.domain --ignore-not-found=true
 kubectl delete crd podcheckpointcontents.lpm.my.domain --ignore-not-found=true
+kubectl delete crd podrestores.lpm.my.domain --ignore-not-found=true
 kubectl delete crd podmigrations.lpm.my.domain --ignore-not-found=true
 
 # Alternative: Delete all CRDs from files
