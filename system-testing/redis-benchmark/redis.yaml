@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-bench
+spec:
+  serviceName: redis-bench-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis-bench
+  template:
+    metadata:
+      labels:
+        app: redis-bench
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-worker2
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        command: ["redis-server", "--save", "", "--appendonly", "no"]
+        ports:
+        - containerPort: 6379
+        resources:
+          requests:
+            memory: "256Mi"
+          limits:
+            memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-bench-headless
+spec:
+  clusterIP: None
+  selector:
+    app: redis-bench
+  ports:
+  - port: 6379
+---
+# NodePort lets scripts on the Vagrant host reach Redis via any node's IP.
+# kube-proxy routes traffic to whichever node the pod is on, so this
+# remains valid after migration without changing the target address.
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-bench-nodeport
+spec:
+  type: NodePort
+  selector:
+    app: redis-bench
+  ports:
+  - port: 6379
+    targetPort: 6379
+    nodePort: 30379

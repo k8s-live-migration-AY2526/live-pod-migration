@@ -1,0 +1,9 @@
+apiVersion: lpm.my.domain/v1
+kind: PodMigration
+metadata:
+  name: redis-bench-migration
+  namespace: default
+spec:
+  podName: redis-bench-0
+  targetNode: k8s-worker
+  closeTcp: true
