@@ -42,7 +42,7 @@ def load_trial(script_dir, strategy):
         meta = dict(line.strip().split('=', 1) for line in f if '=' in line)
     event_ms = int(meta['EVENT_TIMESTAMP'])
 
-    times, hit_rates, p99s, statuses = [], [], [], []
+    times, hit_rates, p50s, statuses = [], [], [], []
     ok_times = []
 
     with open(stats_path) as f:
@@ -55,10 +55,10 @@ def load_trial(script_dir, strategy):
             statuses.append(status)
 
             hit_rate = float(row['hit_rate']) if row['hit_rate'] not in ('N/A', '') else None
-            p99      = float(row['p99_ms'])   if row['p99_ms']   not in ('', '0.0', '0') else None
+            p50      = float(row['p50_ms'])   if row['p50_ms']   not in ('', '0.0', '0') else None
 
             hit_rates.append(hit_rate)
-            p99s.append(p99)
+            p50s.append(p50)
 
             if status == 'ok':
                 ok_times.append(ts_ms)
@@ -76,7 +76,7 @@ def load_trial(script_dir, strategy):
     return {
         'times':            times,
         'hit_rates':        hit_rates,
-        'p99s':             p99s,
+        'p50s':             p50s,
         'statuses':         statuses,
         'blackout_start_t': blackout_start_t,
         'blackout_end_t':   blackout_end_t,
@@ -87,18 +87,18 @@ def load_trial(script_dir, strategy):
 # Plotting helpers
 # ---------------------------------------------------------------------------
 
-def _ok_series(data, key, smooth=False):
+def _ok_series(data, key, smooth=False, smooth_window=None):
     """Return (times, values) keeping only ok rows with non-None values.
     When smooth=True, apply a causal (look-back only) rolling average so that
     the initial drop at t=0 is not diluted by future recovered values."""
+    w = smooth_window if smooth_window is not None else SMOOTH_WINDOW
     pts = [(t, v) for t, s, v in zip(data['times'], data['statuses'], data[key])
            if s == 'ok' and v is not None]
     if not pts:
         return [], []
     times, values = zip(*pts)
     times, values = list(times), list(values)
-    if smooth and len(values) >= SMOOTH_WINDOW:
-        w = SMOOTH_WINDOW
+    if smooth and len(values) >= w:
         smoothed = []
         for i in range(len(values)):
             window = values[max(0, i - w + 1): i + 1]   # causal: only past values
@@ -165,7 +165,7 @@ def main():
     ax_hr.set_yticks([0, 25, 50, 75, 100])
     ax_hr.yaxis.set_tick_params(labelsize=9)
     ax_hr.grid(axis='y', linestyle=':', linewidth=0.5, alpha=0.6)
-    ax_hr.set_xlim(-65, 305)
+    ax_hr.set_xlim(-305, 305)
 
     # ---- Bottom panel: p99 latency -----------------------------------------
     shade_blackout(ax_p99, evict,   COLORS['evict'],   label_y_axes=0.97)
@@ -173,15 +173,15 @@ def main():
 
     for strategy, data in [('evict', evict), ('migrate', migrate)]:
         color = COLORS[strategy]
-        t, p99 = _ok_series(data, 'p99s', smooth=True)
-        ax_p99.plot(t, p99, color=color, linewidth=1.5, alpha=0.9)
+        t, p50 = _ok_series(data, 'p50s', smooth=True, smooth_window=30)
+        ax_p99.plot(t, p50, color=color, linewidth=1.5, alpha=0.9)
 
     ax_p99.axvline(0, color='black', linewidth=0.8, linestyle='--', alpha=0.5)
-    ax_p99.set_ylabel('p99 latency (ms)', fontsize=10)
+    ax_p99.set_ylabel('p50 latency (ms)', fontsize=10)
     ax_p99.set_xlabel('Time relative to event (s)', fontsize=10)
     ax_p99.set_yscale('log')
-    ax_p99.set_ylim(1, 300)
-    ax_p99.yaxis.set_major_locator(matplotlib.ticker.LogLocator(base=10, numticks=5))
+    ax_p99.set_ylim(1, 100)
+    ax_p99.yaxis.set_major_locator(matplotlib.ticker.LogLocator(base=10, numticks=4))
     ax_p99.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(
         lambda x, _: f'{int(x)}'))
     ax_p99.yaxis.set_minor_locator(matplotlib.ticker.NullLocator())
@@ -192,7 +192,7 @@ def main():
     # ---- Shared legend ------------------------------------------------------
     legend_elements = [
         Line2D([0], [0], color=COLORS['evict'],  linewidth=2, label='Pod eviction'),
-        Line2D([0], [0], color=COLORS['migrate'], linewidth=2, label='Live migration (CRIU)'),
+        Line2D([0], [0], color=COLORS['migrate'], linewidth=2, label='Pod migration'),
         mpatches.Patch(facecolor=COLORS['evict'],   alpha=0.35, label='Eviction blackout'),
         mpatches.Patch(facecolor=COLORS['migrate'],  alpha=0.35, label='Migration blackout'),
         Line2D([0], [0], color='black', linewidth=0.8, linestyle='--',
